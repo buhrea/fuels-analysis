@@ -1,0 +1,123 @@
+---
+title: "Intersect Treatments and Subsequent Wildfire"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+library(sf)
+library(tidyverse)
+```
+
+# 1. Data Organization
+
+```{r}
+target_crs <- "EPSG:5070"
+```
+
+## Load Forest Tracker 
+
+This file is missing an assigned CRS and includes complex geometry types which are difficult to intersect, so this section also addresses those items. 
+
+```{r}
+#read file (since only one layer, no need to assign path first)(accessed 10/2/25)
+treats <- st_read("data/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg")
+
+#Missing crs - found from information tab in qgis (ESPG:26913)
+st_crs(treats) <- 26913
+treats <- st_transform(treats, target_crs) #reproject
+
+#Simplify and clean
+treats <- treats %>%
+  st_zm(drop=TRUE, what = "ZM") %>% #drop third and forth dimension
+  st_cast("MULTIPOLYGON") %>% #convert to simpler geometry
+  st_make_valid(treats)
+```
+
+## Load MTBS Fire Perimeters
+```{r}
+# Using perimeter data for 1984-2023, should update to include 2024
+fires <- st_read("data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+  st_transform(target_crs) %>% 
+  mutate(Ig_Date = as.Date(Ig_Date), year=year(Ig_Date)) %>%   # convert to date
+  filter(year>=2015) %>%  # filter for fires that occurred in or after 2015
+  filter(Incid_Type=="Wildfire") %>%
+  filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
+  st_make_valid(fires)
+```
+
+# 2. Find Fires of Interest 
+
+We will find which wildfires intersect with previous treatments, then filter both the fires and treats datasets to only the relevant items. We will then save the filtered datasets for mapping.
+
+## Intersect treatments and subsequent wildfires
+```{r}
+# Intersect treatments and subsequent wildfires
+intersect <- st_intersection(treats, fires) %>%
+  filter(YEAR_COMP < year)  
+```
+
+## Subset fires to only those that intersect 
+```{r}
+# Subset Fires to only those that intersect with prior fuel treatments
+fires <- fires %>% 
+  filter(Incid_Name %in% unique(intersect%>% pull(Incid_Name))) 
+```
+
+## Subset treatments to only those that intersect
+
+This dataset has more observations than "intersect" because "OBJECTID" is not unique. I like seeing the whole project though, so that's alright.
+
+```{r}
+# Subset treatments to only those that intersect subsequent wildfire 
+treats <- treats %>% 
+  filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID))) 
+```
+
+
+# 3. Save Geopackage
+
+```{r}
+gpkg_filename <- "fuels_analysis.gpkg"
+
+# Save the intersection result as the first layer
+
+st_write(
+  obj = intersect,
+  dsn = gpkg_filename,
+  layer = "intersection",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+# Append the subsetted fires as a new layer
+st_write(
+  obj = fires,
+  dsn = gpkg_filename,
+  layer = "fires_with_prior_treatment",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+# Append the subsetted treatments as a new layer
+st_write(
+  obj = treats,
+  dsn = gpkg_filename,
+  layer = "treatments_subsetting_fire",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```
