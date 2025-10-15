@@ -1,0 +1,83 @@
+---
+title: "1.2--Add-Prev-Wildfire-as-Treatment"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+#load packages
+library(sf) 
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+target_crs <- "EPSG:5070"
+```
+
+#Load Geopackage and fires dataset and mtbs
+
+```{r}
+#path to file (accessed 10/2/25)
+intersect_path <- "fuels_analysis.gpkg"
+
+#check layer name
+st_layers(intersect_path)
+
+#save the layer
+myfires <- st_read(intersect_path, layer = "fires_with_prior_treatment")
+
+#inspect the columns/structure of the layer
+str(myfires)
+```
+
+Load MTBS
+
+```{r}
+# Using perimeter data for 1984-2023, should update to include 2024
+allfires <- st_read("data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+  st_transform(target_crs) %>% 
+  mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
+  filter(Incid_Type=="Wildfire") %>%
+  filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
+  st_make_valid(fires)
+```
+
+
+#intersect previous wildfire with fires of interest
+
+```{r}
+# Intersect previous and subsequent wildfires
+fire_intersect <- st_intersection(myfires, allfires) %>%
+  filter(YEAR_COMP < year)
+```
+
+
+## subset mtbs to only previous wildfire
+```{r}
+# Subset mtbs to only previous wildfire
+prior_fires <- fires %>% 
+  filter(Incid_Name %in% unique(fire_intersect%>% pull(Incid_Name.1))) 
+```
+
+
+# load treatment dataset and add previous wildfire 
+```{r}
+treats <- st_read(intersect_path, layer = "treatments_preceding_fire")
+
+treats <- st_join(treats, prior_fires)
+```
+
+# add previous wildfire to intersection
+```{r}
+
+```
+

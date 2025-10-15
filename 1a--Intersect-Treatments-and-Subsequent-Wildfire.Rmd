@@ -1,0 +1,129 @@
+---
+title: "Intersect Treatments and Subsequent Wildfire"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: true
+    toc_depth: '2'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+library(sf)
+library(tidyverse)
+```
+
+# 1. Data Organization
+
+```{r}
+target_crs <- "EPSG:5070"
+  #first assigned EPSG:5070 (used for mapping contiguous US) and worked fine. trying out EPSG:26913 now because it may have higher accuracy in colorado (didn't work)
+```
+
+## Load Forest Tracker 
+
+This file is missing an assigned CRS and includes complex geometry types which are difficult to intersect, so this section also addresses those items. 
+
+```{r}
+#read file (since only one layer, no need to assign path first)(accessed 10/2/25)
+treats <- st_read("data/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg")
+
+#Missing crs - found from information tab in qgis (EPSG:26913 - NAD83 / UTM zone 13N)
+st_crs(treats) <- 26913
+treats <- st_transform(treats, target_crs) #reproject
+
+#Simplify and clean
+treats <- treats %>%
+  st_zm(drop=TRUE, what = "ZM") %>% #drop third and forth dimension
+  st_cast("MULTIPOLYGON") %>% #convert to simpler geometry 
+  filter(MGT_TYPE != "REFOREST") %>%
+  st_make_valid(treats)
+```
+
+## Load MTBS Fire Perimeters
+
+I am filtering for fires from 2015 on. Perimeter data was pre-processed by HART lab.
+
+```{r}
+# Using perimeter data for 1984-2023, should update to include 2024
+fires <- st_read("data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+  st_transform(target_crs) %>% 
+  mutate(Ig_Date = as.Date(Ig_Date), year=year(Ig_Date)) %>%   # convert to date
+  filter(year>=2015) %>%  # filter for fires that occurred in or after 2015
+  filter(Incid_Type=="Wildfire") %>%
+  filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
+  st_make_valid(fires)
+```
+
+# 2. Find Fires of Interest 
+
+We will find which wildfires intersect with previous treatments, then filter both the fires and treats datasets to only the relevant items. We will then save the filtered datasets for mapping.
+
+## Intersect treatments and subsequent wildfires
+```{r}
+# Intersect treatments and subsequent wildfires
+intersect <- st_intersection(treats, fires) %>%
+  filter(YEAR_COMP < year) %>%
+  dplyr::select("Event_ID", "irwinID", "Incid_Name", "Map_ID", "year", "OBJECTID", "MGT_TYPE", "RXFIRE_MGT", "CANOPY_MGT", "SURF_MGT", "YEAR_COMP", "ACRES_MGT", "ACRES_GIS", "FOR_TYPE")
+```
+
+## Subset fires to only those that intersect 
+```{r}
+# Subset Fires to only those that intersect with prior fuel treatments
+fires <- fires %>% 
+  filter(Incid_Name %in% unique(intersect%>% pull(Incid_Name))) %>%
+  dplyr::select("Event_ID", "irwinID", "Incid_Name", "Map_ID", "year")
+```
+
+## Subset treatments to only those that intersect
+
+This dataset has more observations than "intersect" because "OBJECTID" is not unique (multiple polygons can have the same OBJECTID because they are part of the same project). I like seeing the whole project though, so that's alright.
+
+```{r}
+# Subset treatments to only those that intersect subsequent wildfire 
+treats <- treats %>% 
+  filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID))) %>%
+  dplyr::select("OBJECTID", "MGT_TYPE", "RXFIRE_MGT", "CANOPY_MGT", "SURF_MGT", "YEAR_COMP", "ACRES_MGT", "ACRES_GIS", "FOR_TYPE")
+```
+
+
+# 3. Save Geopackage
+
+```{r}
+# Save the intersection result as the first layer
+
+st_write(
+  obj = intersect,
+  dsn = "fuels_analysis.gpkg",
+  layer = "intersection",
+  driver = "GPKG",
+  delete_dsn = TRUE
+)
+
+# Append the subsetted fires as a new layer
+st_write(
+  obj = fires,
+  dsn = "fuels_analysis.gpkg",
+  layer = "fires_with_prior_treatment",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+# Append the subsetted treatments as a new layer
+st_write(
+  obj = treats,
+  dsn = "fuels_analysis.gpkg",
+  layer = "treatments_preceding_fire",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```

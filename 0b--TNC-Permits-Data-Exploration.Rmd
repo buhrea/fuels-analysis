@@ -1,0 +1,257 @@
+---
+title: "TNC Permits Data Exploration"
+subtitle: "Colorado"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 3
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+#load packages
+library(tidyverse)
+library(ggplot2)
+library(scales) #graphical scales in ggplot (entity plot)
+```
+
+# 1. Data Head
+```{r}
+#path to file (accessed 10/7/25)
+permits <- read.csv("data/rx_permit_db_share/analysis_16Sept2025.csv")
+  # 174122 observations
+
+#check column names and values
+head(permits)
+```
+
+To compare to the Colorado Forest Tracker database and due to my research interests, I am filtering to Colorado only.
+
+```{r}
+permits <- filter(permits, STATE == "CO")
+  #9863 observations for burns - about twice as much as forest tracker
+```
+
+# 2. Common Variables
+
+In this section I will visualize columns that are comparable to the Forest Tracker database.
+
+## ENTITY_REQUESTING
+
+There are many unique entities, so first I created groups. 
+
+Field offices were added to the BLM group, though if this variable is used further then they should be individually evaluated.
+
+District offices without clear identifiers are added to "other". This is because I think the Southwest District Office (which accounts for ~100 points) is the Colorado State Forest Service, but it could also be the BLM or someone else.
+
+Some items described as areas (ex. "Gunnison Area", "Monte Vista Area") are, I believe,  Colorado Parks & Wildlife, because some other entries from them are formatted like "Glenwood Springs Area, Colo Pks Wildlife". However these have been left in "other" for now.
+
+"Local Government Agency" was included in City or Town.
+
+```{r}
+df_entity <- permits %>%
+  mutate(
+    ENTITY_GROUP = case_when(
+      # Forest Service
+      str_detect(ENTITY_REQUESTING, regex("National Forest|Natl Forest|Nat'l Forest|Forest Service", ignore_case = TRUE)) ~ "US Forest Service",
+      
+      # Colorado State Forest Service
+      str_detect(ENTITY_REQUESTING, regex("Colo State Forest Svc|Colorado State Forest Svc|CSFS|Coo State Forest Svc", ignore_case = TRUE)) ~ "Colorado State Forest Service",
+      
+      # BLM
+      str_detect(ENTITY_REQUESTING, regex("BLM|Bureau of Land Management|Field Office|Field Offfice|Field  Office", ignore_case = TRUE)) ~ "Bureau of Land Management",
+      
+      # National Park Service
+      str_detect(ENTITY_REQUESTING, regex("National Park|National Monument|National Recreation Area", ignore_case = TRUE)) ~ "National Park Service",
+      
+      # National Wildlife Refuge / USFWS
+      str_detect(ENTITY_REQUESTING, regex("Wildlife Refuge|Fish and Wildlife|USFWS", ignore_case = TRUE)) ~ "US Fish & Wildlife Service",
+      
+      # Colorado Parks & Wildlife
+      str_detect(ENTITY_REQUESTING, regex("Colo Parks|Colorado Parks|CPW|Colo Pks Wildlife", ignore_case = TRUE)) ~ "Colorado Parks & Wildlife",
+      
+      # State Agencies (non-CSFS)
+      str_detect(ENTITY_REQUESTING, regex("State Land Board|Colorado State Parks|State Land", ignore_case = TRUE)) ~ "State Agency",
+      
+      # County Governments
+      str_detect(ENTITY_REQUESTING, regex("County", ignore_case = TRUE)) ~ "County Government",
+      
+      # Cities and Towns
+      str_detect(ENTITY_REQUESTING, regex("City of|Town of|Metro|Metropolitan|Utilities|Local Government Agency", ignore_case = TRUE)) ~ "City or Town",
+      
+      # Fire Departments / Districts
+      str_detect(ENTITY_REQUESTING, regex("Fire|F.D.|Fire Dept|Fire Protection|Fire District", ignore_case = TRUE)) ~ "Fire Department / District",
+      
+      # Private / HOA / Ranch
+      str_detect(ENTITY_REQUESTING, regex("Ranch|Private|HOA|Association|Metro District|Resort|Assn", ignore_case = TRUE)) ~ "Private / HOA / Ranch",
+      
+      # Military
+      str_detect(ENTITY_REQUESTING, regex("Army|Military|Air Force|SFS", ignore_case = TRUE)) ~ "Military",
+      
+      # Conservation NGOs
+      str_detect(ENTITY_REQUESTING, regex("Conservancy|Trust|Foundation", ignore_case = TRUE)) ~ "Conservation NGO",
+      
+      # Multi-Agency / Other labels
+      str_detect(ENTITY_REQUESTING, regex("Multiple", ignore_case = TRUE)) ~ "Multi-Agency",
+      
+      # NA or blank
+      is.na(ENTITY_REQUESTING) | ENTITY_REQUESTING == "" ~ "NA",
+      
+      # Catch-all
+      TRUE ~ "Other"
+    )
+  )
+
+# df_entity %>%
+#   filter(ENTITY_GROUP == "Other") %>%
+#   count(ENTITY_REQUESTING, sort = TRUE)
+```
+
+```{r entity-bar, fig.width=10, fig.height=6}
+# Summarize by ENTITY_REQUESTING
+df_grouped <- df_entity %>%
+  group_by(ENTITY_GROUP) %>%
+  summarise(Count = n()) %>%
+  mutate(
+    Percent = Count / sum(Count),
+    PercentRounded = round(100 * Percent, 1),
+    Label = paste0(PercentRounded, "%")
+  ) %>%
+  filter(PercentRounded > 0) %>%       # Remove entities with 0.0%
+  arrange(Percent)                     # Smallest to largest
+
+# Plot
+ggplot(df_grouped, aes(x = reorder(ENTITY_GROUP, Percent), y = Percent, fill = ENTITY_GROUP)) +
+  geom_bar(stat = "identity", width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 4) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Entities Requesting Burn Permits",
+    x = NULL,
+    y = NULL
+  ) +
+  coord_flip() +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.ticks.x = element_blank(),
+    axis.text.y = element_text(size = 12)
+  )
+```
+
+## BURNTYPE_CLASSIFIED
+
+```{r}
+#BURNTYPE_CLASSIFIED Bar Plot
+
+ggplot(permits, aes(x = BURNTYPE_CLASSIFIED)) +
+  geom_bar() +
+  theme_bw() +
+  labs(title = "Burn Type", x = NULL, y = "Count") 
+```
+
+## YEAR
+```{r}
+# YEAR_COMP histogram
+hist(permits$YEAR, main = "Permit Year", xlab = "Year", xlim = c(2016,2024), breaks = 8)
+```
+
+Years Range:
+```{r}
+range(permits$YEAR)
+```
+
+## ACRES_COMPLETED
+
+```{r}
+#histogram of ACRES_MGT
+hist(permits$ACRES_COMPLETED, main = "Treatment Acres Completed", xlab = "Acres", xlim = c(0, 5000))
+```
+
+Mean Acres:
+```{r}
+#Mean
+mean(permits$ACRES_COMPLETED, na.rm = TRUE)
+#Mean = 35.1611
+```
+
+# 3. Unique Variables
+
+## DATE (Summarized)
+
+```{r time-series, fig.width=10, fig.height=6}
+# Create Date Summaries using package lubridate
+# Convert character to Date
+permits$DATE <- ymd(permits$DATE)
+
+# Extract features
+permits$year <- year(permits$DATE)
+permits$month <- month(permits$DATE, label = TRUE)
+permits$day <- day(permits$DATE)
+
+# Group by year-month
+permits_summary <- permits %>%
+  filter(!is.na(year), !is.na(month)) %>%   # drop NAs
+  group_by(year, month) %>%
+  summarise(n = n(), .groups = "keep")
+
+#Dates Time Series (x = month, y = count, group = year)
+ggplot(permits_summary, aes(x = month, y = n, group = year, color = factor(year))) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = "Monthly Burn Permits by Year",
+    x = "Month",
+    y = "Number of Permits",
+    color = "Year"
+  ) +
+  theme_bw(base_size = 14) +
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  ) + 
+  scale_color_viridis_d(option = "C")
+```
+
+## PILE_VOLUME
+
+```{r}
+#PILE_VOLUME
+hist(permits$PILE_VOLUME, main = "PILE VOLUME", xlab = "?")
+```
+
+Mean:
+
+```{r}
+mean(permits$PILE_VOLUME, na.rm = TRUE)
+```
+
+
+## RECORD_TYPE
+
+```{r}
+# RECORD_TYPE
+
+ggplot(permits, aes(x = RECORD_TYPE)) +
+  geom_bar() +
+  theme_bw() +
+  labs(title = "Record Type", x = NULL, y = "Count") 
+```
+
+
+
+
+# Appendix
+```{r show-code, ref.label = all_labels(), echo = TRUE, eval = FALSE}
+```

@@ -1,0 +1,252 @@
+---
+title: "Forest Tracker Data Exploration"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 3
+  pdf_document:
+    toc: true
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+#load packages
+library(sf) 
+library(tidyverse)
+library(ggplot2)
+```
+
+# 1. Data Structure
+```{r}
+#path to file (accessed 10/2/25)
+treats_path <- "data/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg"
+
+#check layer name
+st_layers(treats_path)
+
+#save the layer
+treats <- st_read(treats_path, layer = "forest_tracker_v1_2024")
+
+#inspect the columns/structure of the layer
+str(treats)
+```
+
+# 2. Exploratory Graphs
+
+I made graphs to visualize all the columns that were required for an observation to be in the database. These include agency, management type, year completed, and acres managed. I also included forest type, which is recorded for nearly all observations.
+
+## 2.1 AGENCY
+```{r agency-bar, fig.width=10, fig.height=6}
+#Agency Bar Chart
+agency_df <- treats %>%
+  st_drop_geometry() %>%
+  group_by(AGENCY) %>%
+  summarise(Count = n()) %>%
+  mutate(
+    Percent = Count / sum(Count),
+    PercentRounded = round(100 * Percent, 1),
+    Label = paste0(PercentRounded, "%")
+  ) %>%
+  filter(PercentRounded > 0) %>%    # Remove agencies with 0.0%
+  arrange(Percent)                  # Smallest to largest
+
+# Plot
+ggplot(agency_df, aes(x = reorder(AGENCY, Percent), y = Percent, fill = AGENCY)) +
+  geom_bar(stat = "identity", width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 4) +
+  scale_y_continuous(labels = scales::percent_format(), expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Agencies Overseeing Activity Implementation",
+    x = NULL,
+    y = NULL
+  ) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),  # removes percent labels
+    axis.ticks.x = element_blank(),  # removes tick marks
+    axis.text.y = element_text(size = 12)
+  )
+```
+
+## 2.2 MGT_TYPE
+```{r}
+# MGT_TYPE barplot
+ggplot(treats, aes(x = MGT_TYPE)) +
+  geom_bar() +
+  theme_bw() +
+  labs(title = "Management Type", x = NULL, y = "Count") 
+```
+
+These four management types are further broken into categories in separate columns. The categories for the three management types having to do with fuels reduction are evaluated below.
+
+### 2.2.3 RXFIRE_MGT
+```{r}
+# RXFIRE_MGT barplot
+rxfire_df <- treats %>%
+  st_drop_geometry() %>%
+  filter(!is.na(RXFIRE_MGT) & RXFIRE_MGT!= "" & RXFIRE_MGT != " ")
+
+ggplot(rxfire_df, aes(x = RXFIRE_MGT)) +
+  geom_bar() +
+  theme_bw() +
+  labs(title = "Rx Fire Type", x = NULL, y = "Count")
+```
+
+### 2.2.4 CANOPY_MGT
+```{r}
+# CANOPY_MGT barplot
+canopy_df <- treats %>%
+  st_drop_geometry() %>%
+  filter(!is.na(CANOPY_MGT) & CANOPY_MGT!= "" & CANOPY_MGT != " ")
+
+ggplot(canopy_df, aes(x = CANOPY_MGT)) +
+  geom_bar() +
+  theme_bw()+
+  labs(title = "Canopy Management Type", x = NULL, y = "Count")
+```
+
+### 2.2.5 SURF_MGT
+```{r}
+# SURF_MGT barplot
+surf_df <- treats %>%
+  st_drop_geometry() %>%
+  filter(!is.na(SURF_MGT) & SURF_MGT!= "" & SURF_MGT != " ")
+
+ggplot(surf_df, aes(x = SURF_MGT)) +
+  geom_bar() +
+  theme_bw()+
+  labs(title = "Surface Management Type", x = NULL, y = "Count")
+```
+
+
+## 2.3 YEAR_COMP
+```{r}
+# YEAR_COMP histogram
+hist(treats$YEAR_COMP, main = "Treatment Year Completed", xlab = "Year", xlim = c(2000,2025))
+```
+
+Years Range:
+```{r}
+range(treats$YEAR_COMP)
+```
+
+## 2.4 FOR_TYPE
+```{r}
+# FOR_TYPE barplot
+ggplot(treats, aes(x = FOR_TYPE)) +
+  geom_bar(fill = "seagreen") +
+  theme_bw() +
+  labs(title = "Forest Type", x = NULL, y = "Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+## 2.5 ACRES_MGT
+
+```{r}
+#histogram of ACRES_MGT
+hist(treats$ACRES_MGT, main = "Treatment Acres Managed", xlab = "Acres")
+```
+
+The distribution of acres is extremely skewed toward 0. Using a log scale here makes the distribution normal, if we end up wanting to do that.
+
+Mean Acres:
+```{r}
+#but mean is small
+mean(treats$ACRES_MGT)
+```
+
+Box plot:
+
+```{r}
+#we can see there are a couple outliers
+boxplot(treats$ACRES_MGT, main = "Boxplot of Treatment Acres Managed", ylab = "Acres")
+```
+
+Mean without top 2 outliers:
+```{r}
+treats_sorted <- treats[order(-treats$ACRES_MGT), ]
+treats_trimmed <- treats_sorted[-c(1, 2), ]
+  #check out mean without the outliers and compare it to the mean with them
+mean(treats_trimmed$ACRES_MGT, na.rm = TRUE)
+```
+
+The mean is nearly the same (difference of 1.3 acres) with or without the 2 highest outliers, so they don't influence that too much. The top outlier is in pinyon-juniper so we will end up filtering it out anyway. 
+
+# 3. Questions
+
+## 3.1 Who is burning?
+
+```{r rxagency-bar, fig.width=10, fig.height=6}
+#RX Burn Agency
+AgRx_df <- rxfire_df %>%
+  st_drop_geometry() %>%
+  group_by(AGENCY) %>%
+  summarise(Count = n()) %>%
+  mutate(
+    Percent = Count / sum(Count),
+    PercentRounded = round(100 * Percent, 1),
+    Label = paste0(PercentRounded, "%")
+  ) %>%
+  filter(PercentRounded > 0) %>%    # Remove agencies with 0.0%
+  arrange(Percent)                  # Smallest to largest
+
+# Plot
+ggplot(AgRx_df, aes(x = reorder(AGENCY, Percent), y = Percent, fill = AGENCY)) +
+  geom_bar(stat = "identity", width = 0.7, show.legend = FALSE) +
+  geom_text(aes(label = Label), hjust = -0.1, size = 4) +
+  scale_y_continuous(labels = scales::percent_format(), expand = expansion(mult = c(0, 0.1))) +
+  labs(
+    title = "Agencies within Rx Fire Management Type",
+    x = NULL,
+    y = NULL
+  ) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),  # removes percent labels
+    axis.ticks.x = element_blank(),  # removes tick marks
+    axis.text.y = element_text(size = 12)
+  )
+```
+
+## 3.2 What is the average acreage of each treatment type?
+
+```{r}
+treats %>%
+  st_drop_geometry() %>%
+  filter(MGT_TYPE %in% c("CANOPY", "RX FIRE", "SURFACE")) %>%
+  group_by(MGT_TYPE) %>%
+  summarise(
+    avg_acres = mean(ACRES_MGT, na.rm = TRUE)
+  ) %>%
+  arrange(MGT_TYPE) %>%
+  mutate(avg_acres = round(avg_acres, 2)) %>%  
+  kable(col.names = c("Treatment Type", "Mean Acres"), align = "lc")
+```
+
+Let's also check size of broadcast burning versus pile burning.
+
+```{r}
+rxfire_df %>%
+  group_by(RXFIRE_MGT) %>%
+  summarise(
+    avg_acres = mean(ACRES_MGT, na.rm = TRUE)
+  ) %>%
+  arrange(RXFIRE_MGT) %>%
+  mutate(avg_acres = round(avg_acres, 2)) %>%  
+  kable(col.names = c("Rx Fire Type", "Mean Acres"), align = "lc")
+```
+
+# Appendix
+```{r show-code, ref.label = all_labels(), echo = TRUE, eval = FALSE}
+```
