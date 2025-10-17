@@ -81,7 +81,7 @@ intersect <- st_intersection(treats, fires) %>%
 # Subset Fires to only those that intersect with prior fuel treatments
 fires <- fires %>% 
   filter(Incid_Name %in% unique(intersect%>% pull(Incid_Name))) %>%
-  dplyr::select("Event_ID", "irwinID", "Incid_Name", "Map_ID", "year")
+  dplyr::select("Event_ID", "irwinID", "Incid_Name", "Map_ID", "Ig_Date", "year")
 ```
 
 ## Subset treatments to only those that intersect

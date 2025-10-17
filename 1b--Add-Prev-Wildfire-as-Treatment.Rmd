@@ -19,10 +19,6 @@ library(tidyverse)
 library(ggplot2)
 ```
 
-```{r}
-target_crs <- "EPSG:5070"
-```
-
 #Load Geopackage and fires dataset and mtbs
 
 ```{r}
@@ -34,9 +30,6 @@ st_layers(intersect_path)
 
 #save the layer
 myfires <- st_read(intersect_path, layer = "fires_with_prior_treatment")
-
-#inspect the columns/structure of the layer
-str(myfires)
 ```
 
 Load MTBS
@@ -44,7 +37,7 @@ Load MTBS
 ```{r}
 # Using perimeter data for 1984-2023, should update to include 2024
 allfires <- st_read("data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
-  st_transform(target_crs) %>% 
+  st_transform("EPSG:5070") %>% 
   mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
   filter(Incid_Type=="Wildfire") %>%
   filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
@@ -57,27 +50,66 @@ allfires <- st_read("data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>%
 ```{r}
 # Intersect previous and subsequent wildfires
 fire_intersect <- st_intersection(myfires, allfires) %>%
-  filter(YEAR_COMP < year)
+  filter(YEAR_COMP < year) %>%
+  rename("OBJECTID" = "Event_ID.1", "MGT_TYPE" = "Incid_Type", "EVENT_NAME" = "Incid_Name.1") %>%
+  dplyr::select("Event_ID", "irwinID", "Incid_Name", "Map_ID", "year", "OBJECTID", "EVENT_NAME","MGT_TYPE", "YEAR_COMP")
 ```
 
 
-## subset mtbs to only previous wildfire
+#subset mtbs to only previous wildfire
 ```{r}
 # Subset mtbs to only previous wildfire
-prior_fires <- fires %>% 
-  filter(Incid_Name %in% unique(fire_intersect%>% pull(Incid_Name.1))) 
+prior_fires <- allfires %>% 
+  filter(Event_ID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
+  rename("OBJECTID" = "Event_ID", "MGT_TYPE" = "Incid_Type", "EVENT_NAME" = "Incid_Name") %>%
+  dplyr::select("OBJECTID", "EVENT_NAME","MGT_TYPE", "YEAR_COMP")
 ```
 
 
 # load treatment dataset and add previous wildfire 
 ```{r}
-treats <- st_read(intersect_path, layer = "treatments_preceding_fire")
+treats <- st_read(intersect_path, layer = "treatments_preceding_fire") %>%
+  mutate(OBJECTID = as.character(OBJECTID)) %>%
+  rename("geometry" = "geom")
 
-treats <- st_join(treats, prior_fires)
+treats <- bind_rows(treats, prior_fires)
 ```
 
 # add previous wildfire to intersection
 ```{r}
+intersection <- st_read(intersect_path, layer = "intersection") %>%
+  mutate(OBJECTID = as.character(OBJECTID))
 
+intersection <- bind_rows(intersection, fire_intersect)
+```
+
+# Save geopackage
+
+```{r}
+# write new interactions layer that includes wildfire
+st_write(
+  obj = intersection,
+  dsn = "fuels_analysis.gpkg",
+  layer = "intersection",
+  driver = "GPKG",
+  delete_layer = TRUE
+)
+
+# write new treatments layer that includes wildfire
+st_write(
+  obj = treats,
+  dsn = "fuels_analysis.gpkg",
+  layer = "treatments_preceding_fire",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+# st_write(
+#   obj = prior_fires,
+#   dsn = "fuels_analysis.gpkg",
+#   layer = "prior_fires",
+#   driver = "GPKG",
+#   delete_layer= TRUE
+# )
 ```
 
