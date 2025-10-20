@@ -58,7 +58,7 @@ I am filtering for fires from 2015 on. Perimeter data was pre-processed by HART 
 fires <- st_read("data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
   st_transform(target_crs) %>% 
   mutate(Ig_Date = as.Date(Ig_Date), year=year(Ig_Date)) %>%   # convert to date
-  filter(year>=2015) %>%  # filter for fires that occurred in or after 2015
+  filter(year>=2001) %>%  # filter for fires that occurred in or after 2015
   filter(Incid_Type=="Wildfire") %>%
   filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
   st_make_valid(fires)
@@ -103,7 +103,7 @@ treats <- treats %>%
 
 st_write(
   obj = intersect,
-  dsn = "fuels_analysis.gpkg",
+  dsn = "geopackages/fuels_analysis.gpkg",
   layer = "intersection",
   driver = "GPKG",
   delete_dsn = TRUE
@@ -112,7 +112,7 @@ st_write(
 # Append the subsetted fires as a new layer
 st_write(
   obj = fires,
-  dsn = "fuels_analysis.gpkg",
+  dsn = "geopackages/fuels_analysis.gpkg",
   layer = "fires_with_prior_treatment",
   driver = "GPKG",
   delete_layer= TRUE
@@ -121,7 +121,7 @@ st_write(
 # Append the subsetted treatments as a new layer
 st_write(
   obj = treats,
-  dsn = "fuels_analysis.gpkg",
+  dsn = "geopackages/fuels_analysis.gpkg",
   layer = "treatments_preceding_fire",
   driver = "GPKG",
   delete_layer= TRUE

@@ -20,7 +20,7 @@ library(ggplot2)
 ```
 
 ```{r}
-gpkg_path <- "fuels_analysis_v2.gpkg"
+gpkg_path <- "geopackages/fuels_analysis_v2.gpkg"
 
 fire_id_column <- "Incid_Name"             
 

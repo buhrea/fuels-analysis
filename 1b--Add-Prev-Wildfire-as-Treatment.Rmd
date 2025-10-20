@@ -23,7 +23,7 @@ library(ggplot2)
 
 ```{r}
 #path to file 
-intersect_path <- "fuels_analysis.gpkg"
+intersect_path <- "geopackages/fuels_analysis.gpkg"
 
 #check layer name
 st_layers(intersect_path)
@@ -89,7 +89,7 @@ intersection <- bind_rows(intersection, fire_intersect)
 # copy over my fires layer and start a new geopackage
 st_write(
   obj = myfires,
-  dsn = "fuels_analysis_v2.gpkg",
+  dsn = "geopackages/fuels_analysis_v2.gpkg",
   layer = "fires",
   driver = "GPKG",
   delete_dsn = TRUE
@@ -99,7 +99,7 @@ st_write(
 # write new interactions layer that includes wildfire
 st_write(
   obj = intersection,
-  dsn = "fuels_analysis_v2.gpkg",
+  dsn = "geopackages/fuels_analysis_v2.gpkg",
   layer = "intersection",
   driver = "GPKG",
   delete_layer = TRUE
@@ -108,7 +108,7 @@ st_write(
 # write new treatments layer that includes wildfire
 st_write(
   obj = treats,
-  dsn = "fuels_analysis_v2.gpkg",
+  dsn = "geopackages/fuels_analysis_v2.gpkg",
   layer = "treatments",
   driver = "GPKG",
   delete_layer= TRUE
