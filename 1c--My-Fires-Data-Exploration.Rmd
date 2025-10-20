@@ -1,0 +1,92 @@
+---
+title: "1c--My-Fires-Data-Exploration"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+#load packages
+library(sf) 
+library(tidyverse)
+library(ggplot2)
+```
+
+```{r}
+gpkg_path <- "fuels_analysis_v2.gpkg"
+
+fire_id_column <- "Incid_Name"             
+
+intersection <- st_read(gpkg_path, layer = "intersection")
+fires <- st_read(gpkg_path, layer = "fires")
+```
+
+# Histogram of Area Treated per Fire
+
+```{r}
+# 1. Group by fire ID and dissolve (union) geometries
+gdf_treated_area <- intersection %>%
+  group_by(!!sym(fire_id_column)) %>%
+  summarise(
+    geometry = st_union(geom),
+    .groups = 'drop'
+  )
+
+# 2. Calculate the unique treated area (in hectares)
+gdf_treated_area <- gdf_treated_area %>%
+  mutate(
+    unique_treated_area_ha = as.numeric(st_area(geometry)) / 10000
+  ) %>%
+  st_drop_geometry() # Drop geometry to prepare for the join
+
+
+# Calculate the total fire area (in hectares)
+gdf_fires_area <- fires %>%
+  mutate(
+    total_fire_area_ha = as.numeric(st_area(geom)) / 10000
+  ) %>%
+  st_drop_geometry() %>% # Drop geometry
+  select(!!sym(fire_id_column), total_fire_area_ha)
+
+
+
+# Join the two datasets by the fire ID
+analysis_data <- gdf_fires_area %>%
+  left_join(gdf_treated_area, by = fire_id_column)
+
+# Handle fires with NO treatment (their unique_treated_area_ha will be NA after the left_join)
+analysis_data <- analysis_data %>%
+  mutate(
+    unique_treated_area_ha = replace_na(unique_treated_area_ha, 0)
+  )
+
+# Calculate the proportion
+analysis_data <- analysis_data %>%
+  mutate(
+    proportion_treated = unique_treated_area_ha / total_fire_area_ha
+  ) %>%
+  # Filter out any fires with 0 area (just in case)
+  filter(total_fire_area_ha > 0)
+
+# Display a summary
+summary(analysis_data$proportion_treated)
+
+# Create the histogram using ggplot2
+ggplot(data = analysis_data, aes(x = proportion_treated)) +
+  geom_histogram(bins = 20, fill = "seagreen", color = "black") +
+  labs(
+    title = "Distribution of Proportion of Fire Area Treated",
+    x = "Proportion Treated (0 to 1)",
+    y = "Number of Fires (Frequency)"
+  ) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) + # Format X-axis as a percentage
+  theme_minimal()
+```
+
