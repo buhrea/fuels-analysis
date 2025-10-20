@@ -19,7 +19,7 @@ library(tidyverse)
 library(ggplot2)
 ```
 
-```{r}
+```{r, include = FALSE}
 gpkg_path <- "geopackages/fuels_analysis_v2.gpkg"
 
 fire_id_column <- "Incid_Name"             
@@ -28,9 +28,9 @@ intersection <- st_read(gpkg_path, layer = "intersection")
 fires <- st_read(gpkg_path, layer = "fires")
 ```
 
-# Histogram of Area Treated per Fire
+# Extent of Treatments in Individual Fires
 
-```{r}
+```{r, fig.width=8, fig.height= 5}
 # 1. Group by fire ID and dissolve (union) geometries
 gdf_treated_area <- intersection %>%
   group_by(!!sym(fire_id_column)) %>%
@@ -75,18 +75,44 @@ analysis_data <- analysis_data %>%
   # Filter out any fires with 0 area (just in case)
   filter(total_fire_area_ha > 0)
 
-# Display a summary
-summary(analysis_data$proportion_treated)
-
 # Create the histogram using ggplot2
 ggplot(data = analysis_data, aes(x = proportion_treated)) +
-  geom_histogram(bins = 20, fill = "seagreen", color = "black") +
+  geom_histogram(bins = 20) +
   labs(
-    title = "Distribution of Proportion of Fire Area Treated",
+    title = "Distribution of Proportion of Fire Area Treated (2015-2023)",
     x = "Proportion Treated (0 to 1)",
     y = "Number of Fires (Frequency)"
   ) +
-  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) + # Format X-axis as a percentage
-  theme_minimal()
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1.05)) + # Format X-axis as a percentage
+  theme_bw()
+```
+
+# Size of Treatments
+
+Summary statistics in hectares:
+
+```{r}
+# Size of Treatments by MGT_TYPE
+
+# 1. Calculate the area of each individual treatment polygon
+treatment_area_data_by_type <- intersection %>%
+  # Calculate area in hectares for each feature in the intersection
+  mutate(
+    treatment_size_ha = as.numeric(st_area(geom)) / 10000 
+  ) %>%
+  st_drop_geometry() %>% # Drop geometry for plotting efficiency
+  # Select only the required columns for plotting and comparison
+  select(MGT_TYPE, treatment_size_ha)
+
+#Summary statistics
+SizeSumStats <- treatment_area_data_by_type %>%
+  group_by(MGT_TYPE) %>%
+  summarise(n = n(),
+            min = min(treatment_size_ha),
+            max = max(treatment_size_ha),
+            mean = mean(treatment_size_ha),
+            sd = sd(treatment_size_ha))
+
+SizeSumStats
 ```
 
