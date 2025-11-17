@@ -15,6 +15,7 @@ knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analys
 ```{r}
 #load packages
 library(sf) 
+library(terra)
 library(tidyverse)
 library(ggplot2)
 ```
@@ -31,7 +32,7 @@ fires <- st_read(gpkg_path, layer = "fires")
 # Extent of Treatments in Individual Fires
 
 ```{r, fig.width=8, fig.height= 5}
-# 1. Group by fire ID and dissolve (union) geometries
+# Group by fire ID and dissolve (union) geometries
 gdf_treated_area <- intersection %>%
   group_by(!!sym(fire_id_column)) %>%
   summarise(
@@ -39,7 +40,7 @@ gdf_treated_area <- intersection %>%
     .groups = 'drop'
   )
 
-# 2. Calculate the unique treated area (in hectares)
+# Calculate the unique treated area (in hectares)
 gdf_treated_area <- gdf_treated_area %>%
   mutate(
     unique_treated_area_ha = as.numeric(st_area(geometry)) / 10000
@@ -114,5 +115,96 @@ SizeSumStats <- treatment_area_data_by_type %>%
             sd = sd(treatment_size_ha))
 
 SizeSumStats
+```
+
+# Elevation
+```{r}
+# --- File Paths ---
+gpkg_path <- "geopackages/fuels_analysis_v2.gpkg"
+raster_path <- "data/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif"
+
+# 1. Load Data
+# Load the 'fires' and 'intersection' layers
+fires_sf <- st_read(gpkg_path, layer = "fires")
+intersection_sf <- st_read(gpkg_path, layer = "intersection")
+
+# Load the elevation raster
+elevation_rast <- rast(raster_path)
+
+# Corrected get_elevation_range function
+get_elevation_range <- function(geometry, raster) {
+  
+  # CRITICAL STEP: Convert the sf geometry object to a SpatVector
+  # The 'terra::vect()' function handles the conversion from sf/sfc objects.
+  spat_vector <- terra::vect(geometry) 
+  
+  # Use terra's extract function with the SpatVector
+  # By setting fun = NULL, we get all values, then calculate min/max manually.
+  values <- terra::extract(raster, spat_vector, fun = NULL, na.rm = TRUE)
+  
+  # Check if any non-NA values were extracted
+  if (is.null(values) || all(is.na(values[, 2]))) {
+    return(c(min_elev = NA, max_elev = NA))
+  }
+  
+  # The second column contains the elevation values (column 1 is the ID)
+  elev_values <- values[, 2] 
+  
+  # Calculate range
+  min_val <- min(elev_values, na.rm = TRUE)
+  max_val <- max(elev_values, na.rm = TRUE)
+  
+  return(c(min_elev = min_val, max_elev = max_val))
+}
+
+# 3. Main Processing Loop
+fire_names <- unique(fires_sf$Incid_Name)
+results_list <- list()
+
+for (name in fire_names) {
+  
+  # --- Filter Data for the Current Fire ---
+  
+  # Get the total area geometry for the current fire (Union geometries if multiple parts exist)
+  fire_geom <- fires_sf %>%
+    filter(Incid_Name == name) %>%
+    st_union()
+  
+  # Get the treated area geometry for the current fire
+  treatment_geom <- intersection_sf %>%
+    filter(Incid_Name == name) %>%
+    st_union()
+  
+  # --- Calculate Elevation Ranges ---
+  
+  # a) Fire Range
+  fire_range <- get_elevation_range(fire_geom, elevation_rast)
+  
+  # b) Treatment Range
+  treatment_range <- get_elevation_range(treatment_geom, elevation_rast)
+  
+  # --- Compile Results ---
+  results_list[[name]] <- data.frame(
+    Incid_Name = name,
+    Fire_Min_Elev = fire_range["min_elev"],
+    Fire_Max_Elev = fire_range["max_elev"],
+    Treatment_Min_Elev = treatment_range["min_elev"],
+    Treatment_Max_Elev = treatment_range["max_elev"]
+  )
+}
+
+# 4. Create Final Table
+final_table <- do.call(rbind, results_list) %>%
+  tibble::rownames_to_column(var = "ID") %>% # Clean up row names
+  select(-ID)
+
+# Display the resulting table
+print(final_table)
+```
+
+# Create the Final Table
+
+```{r}
+fires_table <- left_join(final_table, analysis_data)
 ```
 
