@@ -17,7 +17,6 @@ knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analys
 library(sf) 
 library(terra)
 library(tidyverse)
-library(ggplot2)
 ```
 
 ```{r, include = FALSE}
@@ -80,7 +79,7 @@ analysis_data <- analysis_data %>%
 ggplot(data = analysis_data, aes(x = proportion_treated)) +
   geom_histogram(bins = 20) +
   labs(
-    title = "Distribution of Proportion of Fire Area Treated (2015-2023)",
+    title = "Distribution of Proportion of Fire Area Treated (2015-2024)",
     x = "Proportion Treated (0 to 1)",
     y = "Number of Fires (Frequency)"
   ) +
@@ -119,23 +118,13 @@ SizeSumStats
 
 # Elevation
 ```{r}
-# --- File Paths ---
-gpkg_path <- "geopackages/fuels_analysis_v2.gpkg"
-raster_path <- "data/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif"
-
-# 1. Load Data
-# Load the 'fires' and 'intersection' layers
-fires_sf <- st_read(gpkg_path, layer = "fires")
-intersection_sf <- st_read(gpkg_path, layer = "intersection")
-
 # Load the elevation raster
-elevation_rast <- rast(raster_path)
+elevation_rast <- rast("data/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif")
 
 # Corrected get_elevation_range function
 get_elevation_range <- function(geometry, raster) {
   
-  # CRITICAL STEP: Convert the sf geometry object to a SpatVector
-  # The 'terra::vect()' function handles the conversion from sf/sfc objects.
+  # Convert the sf geometry object to a SpatVector
   spat_vector <- terra::vect(geometry) 
   
   # Use terra's extract function with the SpatVector
@@ -158,7 +147,7 @@ get_elevation_range <- function(geometry, raster) {
 }
 
 # 3. Main Processing Loop
-fire_names <- unique(fires_sf$Incid_Name)
+fire_names <- unique(fires$Incid_Name)
 results_list <- list()
 
 for (name in fire_names) {
@@ -166,12 +155,12 @@ for (name in fire_names) {
   # --- Filter Data for the Current Fire ---
   
   # Get the total area geometry for the current fire (Union geometries if multiple parts exist)
-  fire_geom <- fires_sf %>%
+  fire_geom <- fires %>%
     filter(Incid_Name == name) %>%
     st_union()
   
   # Get the treated area geometry for the current fire
-  treatment_geom <- intersection_sf %>%
+  treatment_geom <- intersection %>%
     filter(Incid_Name == name) %>%
     st_union()
   
@@ -194,17 +183,56 @@ for (name in fire_names) {
 }
 
 # 4. Create Final Table
-final_table <- do.call(rbind, results_list) %>%
+elev_table <- do.call(rbind, results_list) %>%
   tibble::rownames_to_column(var = "ID") %>% # Clean up row names
   select(-ID)
 
 # Display the resulting table
-print(final_table)
+print(elev_table)
 ```
 
 # Create the Final Table
 
 ```{r}
-fires_table <- left_join(final_table, analysis_data)
+# 1. Merge the DataFrames
+# Use inner_join to ensure only fires present in all three tables are included.
+char_table <- fires %>%
+  inner_join(analysis_data, by = "Incid_Name") %>%
+  inner_join(elev_table, by = "Incid_Name")
+
+# 2. Create the Elevation Range Columns
+# Use paste0() to combine the min and max elevation columns into a single string.
+char_table <- char_table %>%
+  # Optionally convert elevation columns to integers before pasting for cleaner output
+  mutate(
+    Fire_Min_Elev = as.integer(Fire_Min_Elev),
+    Fire_Max_Elev = as.integer(Fire_Max_Elev),
+    Treatment_Min_Elev = as.integer(Treatment_Min_Elev),
+    Treatment_Max_Elev = as.integer(Treatment_Max_Elev),
+    total_fire_area_ha = round(total_fire_area_ha, digits = 0),
+    proportion_treated = round(proportion_treated, digits = 2),
+    
+    # Create the range strings
+    `Elevation Range of Fire (m)` = paste0(Fire_Min_Elev, "–", Fire_Max_Elev),
+    `Elevation Range of Treatments (m)` = paste0(Treatment_Min_Elev, "–", Treatment_Max_Elev)
+  )
+
+# 3. Select and Rename Final Columns
+result_table <- char_table %>%
+  arrange(desc(proportion_treated)) %>%
+  select(
+    'Fire Name' = Incid_Name, 
+    year,
+    'Area (ha)' = total_fire_area_ha, 
+    'Proportion Treated' = proportion_treated, 
+    'Elevation Range of Fire (m)',
+    'Elevation Range of Treatments (m)') %>%
+  st_drop_geometry() 
+
+# Display the first few rows of the final table
+head(result_table)
+
+# Optional: Save the table to a CSV file
+write.csv(result_table, "data/my_fires_table.csv", row.names = FALSE)
 ```
 
