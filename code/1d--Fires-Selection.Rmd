@@ -1,0 +1,147 @@
+---
+title: "1d--Fires-Selection"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
+```
+
+```{r}
+#load packages
+library(sf) 
+library(tidyverse)
+```
+
+#Load list of fires with relevant info
+
+```{r}
+#read csv
+fires <- read.csv("data/processed/my_fires.csv")
+colnames(fires)
+```
+
+# Filter fires for proportion treated and minimum elevation
+
+So far, the only filters for site/fire selection have been selecting for fires withing the past ~15 years (2010-2024) which intersect with previous fuels reduction. Now, I will impose 2 more filters:
+--The proportion of the wildfire treated must be equal to or greater than 0.1, when rounded to two decimal points. This is to improve site sampling within each fire.
+--The minimum elevation of the fire must be greater than 1500 m. This is to exclude lower-elevation vegetation types.
+
+```{r}
+myfires <- fires %>%
+  filter(Proportion_Treated >= 0.1) %>%
+  filter(Proportion_Treated < 1) %>%
+  filter(Fire_Min_Elev > 1500)
+
+write.csv(myfires, "data/processed/my_fires.csv")
+
+myfiresIDs <- myfires$Event_ID
+
+```
+
+# Update all geopackage layers to reflect fire selection
+
+```{r}
+#path to file 
+gpkg_path <- "data/processed/fuels_analysis.gpkg"
+
+#check layer name
+st_layers(gpkg_path)
+
+#read the layers
+fires <- st_read(gpkg_path, layer = "fires")
+intersection <- st_read(gpkg_path, layer = "intersection")
+treatments <- st_read(gpkg_path, layer = "treatments")
+
+#subset fires
+fires_sub <- fires %>% 
+  filter(Event_ID %in% myfiresIDs)
+
+#subset the intersection
+inter_sub <- intersection %>% 
+  filter(Event_ID %in% myfiresIDs)
+
+#subset the treatments
+treat_sub <- treatments %>%
+  filter(OBJECTID %in% inter_sub$OBJECTID)
+
+```
+
+# Save new geopackage
+
+```{r}
+# copy over my fires layer
+st_write(
+  obj = fires_sub,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "fires",
+  driver = "GPKG",
+  delete_dsn = TRUE
+)
+
+
+# write new interactions layer that includes wildfire
+st_write(
+  obj = inter_sub,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "intersection",
+  driver = "GPKG",
+  delete_layer = TRUE
+)
+
+# write new treatments layer that includes wildfire
+st_write(
+  obj = treat_sub,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "treatments",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```
+
+# Prepare fires for use in Parks GEE methods
+
+```{r}
+## Prepares the selected fires perimeter dataset for use in Sean Parks' GEE code for calculating fire severity
+st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # import selected perimeters
+  mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
+  mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
+  mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
+  mutate(Fire_Year=year, Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
+  select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
+  st_write("data/processed/GEE/fires_GEE.shp", delete_dsn = TRUE)
+```
+
+
+# Make a map of selected fires
+
+```{r}
+CO <- st_read("data/spatial/States/cb_2018_us_state_20m.shp") %>%
+  st_transform(st_crs(fires_sub)) %>%
+  filter(NAME == "Colorado")
+
+cities <- st_read("data/spatial/Cities/Colorado_City_Point_Locations.shp") %>%
+  st_transform(st_crs(fires_sub)) %>%
+  filter(name %in% c("Fort Collins", "Denver", "Colorado Springs",
+                 "Grand Junction", "Durango", "Vail"))
+
+
+# Plot states first as the basemap
+plot(st_geometry(CO), col = "white", border = "black")
+
+# Add city points
+plot(st_geometry(cities), add = TRUE, pch = 20, cex = 0.5, col = "purple", border = "black")
+
+# Add your fire perimeters
+plot(st_geometry(fires_sub), add = TRUE, border = "orange", col = "orange")
+
+# Add your treatments layer
+plot(st_geometry(inter_sub), add = TRUE, border = "blue")
+
+```
+
