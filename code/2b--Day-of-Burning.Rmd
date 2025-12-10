@@ -10,7 +10,9 @@ knitr::opts_chunk$set(echo = TRUE)
 
 library(tidyverse)
 library(sf)
+library(terra)
 library(here)
+
 ```
 
 
@@ -19,41 +21,44 @@ library(here)
 This code creates day of burning (DOB) maps for each fire following methods outlined by Parks et al. [-@parks2014MappingDayofburningCoarseresolution]. The following code is modified from code used in Harris et al. [-@harris2025AspenImpedesWildfire].
 
 ```{r}
-#dir.create(here("Data", "Spatial", "Processed", "DOB"), showWarnings = FALSE)
-
-
 #CO
-CO<- st_read(here("data", "States", "cb_2018_us_state_20m.shp")) %>% 
+CO<- st_read("data/spatial/States/cb_2018_us_state_20m.shp") %>% 
    filter(STUSPS =="CO") %>%
    st_transform("EPSG:5070") %>% # transform to Albers Equal-Area Conic (USGS)
    st_union() 
 
-fires <- st_read(here("geopackages", paste0("fuels_analysis_v2.gpkg"))) %>% 
+fires <- st_read("data/processed/GEE/fires_GEE_v2.shp") %>% 
   st_transform("EPSG:5070") 
  
-wfigs <- st_read(here("data", "WFIGS"), paste0("WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg")) %>% 
+wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
   filter(poly_FeatureCategory=="Wildfire Final Fire Perimeter") %>% #(n=16775)
   st_transform("EPSG:5070") %>%# transform to Albers Equal-Area Conic (USGS)
   st_crop(CO) %>% 
-  mutate(year=lubridate::year(attr_FireDiscoveryDateTime)) %>% 
+  mutate(YEAR=lubridate::year(attr_FireDiscoveryDateTime)) %>% 
   mutate(start.doy= lubridate::yday(attr_FireDiscoveryDateTime)) %>%
-  mutate(contain.doy= lubridate::yday(attr_ControlDateTime)) 
+  mutate(contain.doy= lubridate::yday(attr_ControlDateTime)) %>%
+  mutate(STARTMONTH = lubridate::month(attr_FireDiscoveryDateTime)) %>%
+  mutate(STARTDAY = lubridate::day(attr_FireDiscoveryDateTime))
+          
+```
 
-for (j in unique(fires$FIRE_ID)){
+
+```{r}
+for (j in unique(fires$Fire_ID)){
   options(warn=-1)
-  if(!file.exists(here("Data", "Spatial", "Processed", "DOB",  paste0(j, "_DOB.tif")))){
-    basegrid <- rast(here("Data", "Spatial", "Processed", "GEE", "FireSeverity", "CBI", paste0(j, "_CBI_bc.tif")))
+  if(!file.exists(here("data", "processed", "DOB",  paste0(j, "_DOB.tif")))){
+    basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", paste0(j, "_CBI_bc.tif")))
     basegrid[] <- 1 # replace all values with 0
     
-    perimeter <- fires[fires$FIRE_ID == j,] 
+    perimeter <- fires[fires$Fire_ID == j,] 
   
   
-    if(perimeter$YEAR %in% 2020:2024){
+    if(perimeter$Fire_Year %in% 2020:2024){
       centroidj<- st_centroid(perimeter)
-       wfigsj <- wfigs %>% filter(year == perimeter$YEAR)
+       wfigsj <- wfigs %>% filter(year == perimeter$Fire_Year)
       wfigsj <- st_join(centroidj, wfigs, join = st_within, left=FALSE)
       perimeter <- perimeter %>%  
-        mutate(STARTDATE=as.Date(paste( wfigsj$YEAR, wfigsj$STARTMONTH, wfigsj$STARTDAY, sep="-"))) %>% 
+        mutate(STARTDATE=as.Date(paste(wfigsj$YEAR, wfigsj$STARTMONTH, wfigsj$STARTDAY, sep="-"))) %>% 
         mutate(ENDDATE=as.Date(paste(year(wfigsj$attr_ContainmentDateTime), month(wfigsj$attr_ContainmentDateTime), day(wfigsj$attr_ContainmentDateTime), sep="-") ))
     }else{
       wfigsj <- wfigs %>% st_drop_geometry() %>% summarize(start=min(as.numeric(start.doy), na.rm=T), end=max(as.numeric(contain.doy), na.rm=T))
@@ -66,9 +71,9 @@ for (j in unique(fires$FIRE_ID)){
     
     
     # 1.2 Process hotspots. Here we assume FIRMs ------------------------------
-    modis_hotspots <- read.csv(here("Data", "Spatial", "Raw", "Fire", "MODIS", "modis", perimeter$YEAR, paste0("modis_", perimeter$YEAR, "_United_States.csv")))
+    modis_hotspots <- read.csv(here("data", "spatial", "Fire", "MODIS", "modis", perimeter$YEAR, paste0("modis_", perimeter$YEAR, "_United_States.csv")))
     if(perimeter$YEAR %in% 2012:2024){
-      viirs_hotspots <- read.csv(here("Data", "Spatial", "Raw", "Fire", "VIIRS", "viirs-snpp", perimeter$YEAR, paste0("viirs-snpp_", perimeter$YEAR, "_United_States.csv")))
+      viirs_hotspots <- read.csv(here("data", "spatial", "Fire", "VIIRS", "viirs-snpp", perimeter$YEAR, paste0("viirs-snpp_", perimeter$YEAR, "_United_States.csv")))
     
       names(viirs_hotspots) <- names(modis_hotspots)
       hotspots  <- rbind(modis_hotspots, viirs_hotspots)
@@ -101,11 +106,8 @@ for (j in unique(fires$FIRE_ID)){
     grid.pt <- st_as_sf(grid.pt, as_points = TRUE, merge = FALSE)
     
     #Time zone correction - here assume daylight savings time and only one time zone
-    timezone <- vect(list.files(here("Data", "Spatial", "Raw", "TimeZones"), full.names=T)) %>% 
-        terra::project(crs(basegrid))
-    timezone <- terra::intersect(centroids(perimeter), timezone) 
-    timezone_offset <- as.numeric(gsub(":", "", timezone$utc))/100
-    
+    # Assume all observations are in Mountain Daylight Time (UTC-6)
+    timezone_offset <- -6  # hours
     hotspots$JDAYDEC <- hotspots$JDAYDEC + timezone_offset/24
     hotspots <- st_as_sf(hotspots) #gstat needs sf
 
@@ -120,7 +122,7 @@ for (j in unique(fires$FIRE_ID)){
     grid.jday[!is.na(grid.jday)] <- dob.kriged$var1.pred
   
     grid.jday <- trunc(grid.jday)
-    writeRaster(grid.jday, here("Data", "Spatial", "Processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.tif")), overwrite=T)
+    writeRaster(grid.jday, here("data", "processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.tif")), overwrite=T)
     
 
     #Daily spread estimation - assuming circular growth. Note this biases later fires day to unestimated growth
@@ -153,9 +155,144 @@ for (j in unique(fires$FIRE_ID)){
       }
     }
     DOB$FIRE_ID <- j
-    st_write(DOB, here("Data", "Spatial", "Processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.gpkg")), overwrite=T)
+    st_write(DOB, here("data", "processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.gpkg")), overwrite=T)
   }
   options(warn=0)
 }
+```
+
+
+## Troubleshooting, try just one
+
+```{r}
+# --- Define the output path ---
+# CHANGE THIS TO A PATH ON YOUR COMPUTER
+output_dir <- "data/processed/test/"
+dir.create(output_dir, showWarnings = FALSE) # Create directory if it doesn't exist
+
+# 1. Save the Centroid (Point)
+st_write(centroidj, paste0(output_dir, "centroid_point.gpkg"), delete_layer = TRUE)
+
+# 2. Save the Filtered Polygons (Multipolygon/Polygon)
+st_write(wfigsj, paste0(output_dir, "wfigs_filtered_polygons.gpkg"), delete_layer = TRUE)
+
+# 3. Save the original Perimeter (Polygon)
+st_write(perimeter, paste0(output_dir, "original_perimeter.gpkg"), delete_layer = TRUE)
+
+print(paste("Files saved successfully to:", output_dir))
+
+  options(warn=-1)
+  if(!file.exists(here("data", "processed", "DOB", "CO4060910587920200813_DOB.tif"))){
+    basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", "CO4060910587920200813_CBI_bc.tif"))
+    basegrid[] <- 1 # replace all values with 0
+    
+    perimeter <- fires[fires$Fire_ID == "CO4060910587920200813", ] 
+  
+    if(perimeter$Fire_Year %in% 2020:2024){
+      centroidj<- st_centroid(perimeter)
+      wfigsj <- wfigs %>% filter(year == perimeter$Fire_Year)
+      wfigsj <- st_join(centroidj, wfigsj, join = st_within, left=FALSE)
+      perimeter <- perimeter %>%  
+        mutate(STARTDATE=as.Date(paste( wfigsj$YEAR, wfigsj$STARTMONTH, wfigsj$STARTDAY, sep="-"))) %>% 
+        mutate(ENDDATE=as.Date(paste(year(wfigsj$attr_ContainmentDateTime), month(wfigsj$attr_ContainmentDateTime), day(wfigsj$attr_ContainmentDateTime), sep="-") ))
+    }else{
+      wfigsj <- wfigs %>% st_drop_geometry() %>% summarize(start=min(as.numeric(start.doy), na.rm=T), end=max(as.numeric(contain.doy), na.rm=T))
+      perimeter <- perimeter %>%  
+        mutate(STARTDATE=as.Date(paste( perimeter$YEAR, perimeter$STARTMONTH, perimeter$STARTDAY, sep="-"))) %>% 
+        mutate(ENDDATE=365)
+    }
+    
+    perimeter <- terra::project(vect(perimeter), crs(basegrid))
+    
+    
+    # 1.2 Process hotspots. Here we assume FIRMs ------------------------------
+    modis_hotspots <- read.csv(here("data", "spatial", "Fire", "MODIS", "modis", perimeter$Fire_Year, paste0("modis_", perimeter$Fire_Year, "_United_States.csv")))
+    if(perimeter$Fire_Year %in% 2012:2024){
+      viirs_hotspots <- read.csv(here("data", "spatial", "Fire", "VIIRS", "viirs-snpp", perimeter$Fire_Year, paste0("viirs-snpp_", perimeter$Fire_Year, "_United_States.csv")))
+    
+      names(viirs_hotspots) <- names(modis_hotspots)
+      hotspots  <- rbind(modis_hotspots, viirs_hotspots)
+    }else{
+      hotspots  <- modis_hotspots
+    }
+    
+    hotspots$JDAY <- as.numeric(lubridate::yday(hotspots$acq_date))
+    hotspots$ACQ_TIME <- as.numeric(format(hotspots$acq_time, digits=4))/2400
+    hotspots$YEAR  <- lubridate::year(hotspots$acq_date)
+    hotspots$JDAYDEC  <- hotspots$JDAY + hotspots$ACQ_TIME
+    
+    #Crop to perimeter date. In this case, maximum allowable error is 30 days.
+    hotspots <- hotspots %>% dplyr::filter(YEAR == perimeter$Fire_Year, 
+                                           JDAY >= lubridate::yday(perimeter$Start_Day) - 30)
+    
+    hotspots <- hotspots %>%  st_as_sf(coords=c("longitude", "latitude"), crs=st_crs("EPSG:4326")) %>% vect()    
+    hotspots <- terra::project(hotspots, crs(basegrid))
+    
+    #Spatially crop to perimeter + 1000 m
+    perimeter_buf <- terra::buffer(perimeter, 1000)
+    hotspots      <- terra::crop(hotspots, perimeter_buf) 
+    
+    # 2.0 Interpolate Fire Arrival --------------------------------------------
+    # Here we use the subset hotspots and pre-defined perimeter to interpolate fire arrival time using kriging
+    grid.fire <- terra::crop(basegrid, perimeter)
+    grid.fire <- terra::rasterize(perimeter, grid.fire, fun="max", field=0)
+    
+    grid.pt <- st_as_stars(grid.fire)
+    grid.pt <- st_as_sf(grid.pt, as_points = TRUE, merge = FALSE)
+    
+    #Time zone correction - here assume daylight savings time and only one time zone
+    # Assume all observations are in Mountain Daylight Time (UTC-6)
+    timezone_offset <- -6  # hours
+    hotspots$JDAYDEC <- hotspots$JDAYDEC + timezone_offset/24
+    hotspots <- st_as_sf(hotspots) #gstat needs sf
+
+    #kriging
+    dob.kriged <- gstat::variogram(JDAYDEC ~ 1, hotspots)
+    dob.fit <- fit.variogram(dob.kriged, vgm(c("Exp", "Sph", "Mat")))
+    dob.fit <- dob.fit %>% filter(range>=0)
+    dob.kriged <- krige(JDAYDEC~1, hotspots, grid.pt, model=dob.fit, nmax=6)
+    
+    # Assign values to grid, using GRID.FIRE as a base raster
+    grid.jday <- grid.fire
+    grid.jday[!is.na(grid.jday)] <- dob.kriged$var1.pred
+  
+    grid.jday <- trunc(grid.jday)
+    writeRaster(grid.jday, here("data", "processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.tif")), overwrite=T)
+    
+
+    #Daily spread estimation - assuming circular growth. Note this biases later fires day to unestimated growth
+
+    PTS <- as.points(grid.jday) %>% st_as_sf()
+    names(PTS)[1] <- "DOB"
+    
+    DOB <- as.polygons(grid.jday)%>% st_as_sf()
+    names(DOB)[1] <- "DOB"
+      
+    DOB$firearea <- st_area(DOB)
+    DOB$firearea <- set_units(DOB$firearea, ha)
+    
+    DOB <- DOB %>% group_by(DOB) %>% summarise(firearea = sum(as.numeric(firearea)))
+    DOB <- DOB %>% mutate(firearea = ifelse(is.na(firearea), 0, firearea))
+    DOB$cumuarea <- cumsum(DOB$firearea)
+    DOB$fireday <- DOB$DOB - min(DOB$DOB) + 1
+    DOB$sprdistm <- 2*((DOB$cumuarea * 10000/pi)^0.5 - ((DOB$cumuarea*10000-DOB$firearea*10000)/pi)^0.5) # *2 for unidirectional growth
+    
+    ## Calculate bearing to previous day of burning polygon
+    DOB$dir <- NA 
+    DOB <- DOB %>% arrange(DOB)
+    for(k in unique(DOB$DOB)){
+       DOBk <- DOB %>% filter(DOB==k)
+      if(k>min(DOB$DOB)){
+        pDOB <- DOB %>% filter(DOB<k) %>% arrange(desc(DOB)) %>% slice(1)
+        pDOB.c <- pDOB %>% st_centroid() %>% st_coordinates() # centroid
+        DOBk.c <- DOBk %>% st_centroid() %>% st_coordinates() # centroid
+        DOB[DOB$DOB==k, ]$dir <- bearing(pDOB.c, DOBk.c)
+      }
+    }
+    DOB$FIRE_ID <- j
+    st_write(DOB, here("data", "processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.gpkg")), overwrite=T)
+  }
+  options(warn=0)
+
 ```
 
