@@ -12,6 +12,9 @@ library(tidyverse)
 library(sf)
 library(terra)
 library(here)
+library(gstat)
+library(units)
+library(geosphere)
 
 ```
 
@@ -34,7 +37,9 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # im
   mutate(Fire_Month = lubridate::month(date)) %>%
   mutate(Fire_Day = lubridate::day(date)) %>%
   select(Fire_ID, Fire_Year, Fire_Month, Fire_Day) %>% 
-  st_transform("EPSG:5070") 
+  st_transform("EPSG:5070") %>%
+  filter(Fire_ID != "CO3701810400020200822")  #Remove East fork which is not in wfigs
+  # filter(Fire_ID != "CO4071610803320140723") #just having issues with this one
  
 wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
   filter(poly_FeatureCategory=="Wildfire Final Fire Perimeter") %>% #(n=16775)
@@ -45,36 +50,35 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
   mutate(contain.doy= lubridate::yday(attr_ControlDateTime)) %>%
   mutate(STARTMONTH = lubridate::month(attr_FireDiscoveryDateTime)) %>%
   mutate(STARTDAY = lubridate::day(attr_FireDiscoveryDateTime))
-          
+
 ```
 
-## Troubleshooting, try just one
+## Modified code from HartLab
 
 ```{r}
-#for (j in unique(fires$Fire_ID)){
-  options(warn=-1)
-  if(!file.exists(here("data", "processed", "DOB", "CO4060910587920200813_DOB.tif"))){
-    basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", "CO4060910587920200813_CBI_bc.tif"))
+for (j in unique(fires$Fire_ID)){
+  if(!file.exists(here("data", "processed", "DOB",  paste0(j, "_DOB.tif")))){
+    basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", paste0(j, "_CBI_bc.tif")))
     basegrid[] <- 1 # replace all values with 0
     
-    perimeter <- fires[fires$Fire_ID == "CO4060910587920200813", ] 
-  
+    perimeter <- fires[fires$Fire_ID == j, ] 
+    
+    #1.1 Add start and end dates using WFIGS or MTBS (if outside WFIGS years)
     if(perimeter$Fire_Year %in% 2020:2024){
       centroidj<- st_centroid(perimeter)
       wfigsj <- wfigs %>% filter(YEAR == perimeter$Fire_Year)
-      wfigsj <- st_join(centroidj, wfigsj, join = st_within, left=FALSE)
+      wfigsj <- st_join(centroidj, wfigsj, join = st_within, left = FALSE)
       perimeter <- perimeter %>%  
         mutate(STARTDATE=as.Date(paste( wfigsj$YEAR, wfigsj$STARTMONTH, wfigsj$STARTDAY, sep="-"))) %>% 
         mutate(ENDDATE=as.Date(paste(year(wfigsj$attr_ContainmentDateTime), month(wfigsj$attr_ContainmentDateTime), day(wfigsj$attr_ContainmentDateTime), sep="-") ))
     }else{
       wfigsj <- wfigs %>% st_drop_geometry() %>% summarize(start=min(as.numeric(start.doy), na.rm=T), end=max(as.numeric(contain.doy), na.rm=T))
       perimeter <- perimeter %>%  
-        mutate(STARTDATE=as.Date(paste(perimeter$YEAR, perimeter$STARTMONTH, perimeter$STARTDAY, sep="-"))) %>% 
-        mutate(ENDDATE=365)
+        mutate(STARTDATE=as.Date(paste(perimeter$Fire_Year, perimeter$Fire_Month, perimeter$Fire_Day, sep="-"))) %>% 
+        mutate(ENDDATE=365) # does this need to be adjusted as a date?
     }
     
     perimeter <- terra::project(vect(perimeter), crs(basegrid))
-    
     
     # 1.2 Process hotspots. Here we assume FIRMs ------------------------------
     modis_hotspots <- read.csv(here("data", "spatial", "Fire", "MODIS", "modis", perimeter$Fire_Year, paste0("modis_", perimeter$Fire_Year, "_United_States.csv")))
@@ -94,7 +98,7 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
     
     #Crop to perimeter date. In this case, maximum allowable error is 30 days.
     hotspots <- hotspots %>% dplyr::filter(YEAR == perimeter$Fire_Year, 
-                                           JDAY >= lubridate::yday(perimeter$Start_Day) - 30)
+                                           JDAY >= lubridate::yday(perimeter$STARTDATE) - 30)
     
     hotspots <- hotspots %>%  st_as_sf(coords=c("longitude", "latitude"), crs=st_crs("EPSG:4326")) %>% vect()    
     hotspots <- terra::project(hotspots, crs(basegrid))
@@ -108,7 +112,7 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
     grid.fire <- terra::crop(basegrid, perimeter)
     grid.fire <- terra::rasterize(perimeter, grid.fire, fun="max", field=0)
     
-    grid.pt <- st_as_stars(grid.fire)
+    grid.pt <- stars::st_as_stars(grid.fire)
     grid.pt <- st_as_sf(grid.pt, as_points = TRUE, merge = FALSE)
     
     #Time zone correction - here assume daylight savings time and only one time zone
@@ -119,7 +123,7 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
 
     #kriging
     dob.kriged <- gstat::variogram(JDAYDEC ~ 1, hotspots)
-    dob.fit <- fit.variogram(dob.kriged, vgm(c("Exp", "Sph", "Mat")))
+    dob.fit <- gstat::fit.variogram(dob.kriged, gstat::vgm(c("Exp", "Sph", "Mat")))
     dob.fit <- dob.fit %>% filter(range>=0)
     dob.kriged <- krige(JDAYDEC~1, hotspots, grid.pt, model=dob.fit, nmax=6)
     
@@ -128,7 +132,7 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
     grid.jday[!is.na(grid.jday)] <- dob.kriged$var1.pred
   
     grid.jday <- trunc(grid.jday)
-    writeRaster(grid.jday, here("data", "processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.tif")), overwrite=T)
+    writeRaster(grid.jday, here("data", "processed", "DOB",  paste0(perimeter$Fire_ID, "_DOB.tif")), overwrite=T)
     
 
     #Daily spread estimation - assuming circular growth. Note this biases later fires day to unestimated growth
@@ -140,7 +144,7 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
     names(DOB)[1] <- "DOB"
       
     DOB$firearea <- st_area(DOB)
-    DOB$firearea <- set_units(DOB$firearea, ha)
+    DOB$firearea <- units::set_units(DOB$firearea, ha)
     
     DOB <- DOB %>% group_by(DOB) %>% summarise(firearea = sum(as.numeric(firearea)))
     DOB <- DOB %>% mutate(firearea = ifelse(is.na(firearea), 0, firearea))
@@ -157,13 +161,16 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
         pDOB <- DOB %>% filter(DOB<k) %>% arrange(desc(DOB)) %>% slice(1)
         pDOB.c <- pDOB %>% st_centroid() %>% st_coordinates() # centroid
         DOBk.c <- DOBk %>% st_centroid() %>% st_coordinates() # centroid
-        DOB[DOB$DOB==k, ]$dir <- bearing(pDOB.c, DOBk.c)
+        DOB[DOB$DOB==k, ]$dir <- geosphere::bearing(pDOB.c, DOBk.c)
       }
     }
     DOB$FIRE_ID <- j
-    st_write(DOB, here("data", "processed", "DOB",  paste0(perimeter$FIRE_ID, "_DOB.gpkg")), overwrite=T)
+    st_write(DOB, here("data", "processed", "DOB",  paste0(perimeter$Fire_ID, "_DOB.gpkg")), overwrite=T)
   }
-  options(warn=0)
+}
+```
+
+```{r}
 
 ```
 
