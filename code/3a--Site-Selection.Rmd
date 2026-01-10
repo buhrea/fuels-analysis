@@ -1,0 +1,406 @@
+---
+title: "3a--Site-Selection"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+This document will perform analysis for random site selection of plots with varying radii in selected fires (2010-2024, >=10% extent treated area, >1500 min elevation, in Colorado). It will use MTBS perimeters to generate points. 
+
+  1. Generate points with random x-y coordinates in each fire, minimum 1000m from the fire perimeter and 2000m away from each other. 
+  2. Generate buffered circles surrounding points with varying radii (100m, 500m, 1000m). Following distance from Jones 2025 but adding one smaller radii and removing greater radius in anticipation of fewer sampling opportunities in my fires. Updated to 100, 250, and 500m
+  
+After these plots are selected, I will summarize response and predictor variables at each plot and scale. For example, proportion treated as a predictor variable and proportion burned at high severity as a response. 
+  
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Load packages
+```{r}
+library(tidyverse)
+library(sf)
+library(terra)
+library(lwgeom) #spherical functions for transects
+library(RcppRoll) #rolling operations for transects
+library(slider) #2nd try sliding operations for transects
+```
+
+
+# MTBS Fire Perimeters
+```{r}
+fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>%
+  mutate(
+    Area_SqM = as.numeric(st_area(.))   # Get area in square meters
+  )
+```
+
+# Point Selection with Perimeter Buffering and Minimum Distance
+```{r}
+# 1. Shrink the fires by 1000m to satisfy the edge requirement
+# st_buffer with a negative value creates an inner buffer
+fire_interiors <- st_buffer(fires, dist = -500)
+
+# Filter out any fires that became too small/disappeared after buffering
+fire_interiors <- fire_interiors[!st_is_empty(fire_interiors), ]
+
+# 2. Function to sample points with a minimum distance constraint
+sample_with_min_dist <- function(polygon, min_dist = 1000) {
+  # Start with an initial random sample (oversample slightly)
+  # We use "regular" or "random" then filter
+  pts <- st_sample(polygon, size = 50) # Adjust size based on fire area
+  
+  if (length(pts) == 0) return(NULL)
+  
+  # Thin the points to ensure they are 2000m apart
+  # This uses a simple iterative 'greedy' approach
+  kept_pts <- pts[1]
+  if (length(pts) > 1) {
+    for (i in 2:length(pts)) {
+      distances <- st_distance(pts[i], kept_pts)
+      if (all(as.numeric(distances) >= min_dist)) {
+        kept_pts <- c(kept_pts, pts[i])
+      }
+    }
+  }
+  return(kept_pts)
+}
+
+# 3. Apply to each fire
+# Using purrr::map or a loop to keep the points associated with fire IDs
+sampled_points_list <- lapply(1:nrow(fire_interiors), function(i) {
+  pts <- sample_with_min_dist(fire_interiors[i, ], min_dist = 1000)
+  if (is.null(pts)) return(NULL)
+  
+  # Convert to sf object and keep the original fire's attributes
+  st_sf(geometry = pts) %>%
+    mutate(fire_id = fire_interiors$id_field[i]) # Replace with your ID column name
+})
+
+# Combine all points into one object
+final_points <- do.call(rbind, sampled_points_list)
+
+st_write(
+  obj = final_points,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "plots",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```
+
+# Creating circle plots with varying radii
+
+```{r}
+# 1. Define the radii you want
+radii <- c(100, 250, 500)
+
+# 2. Create a list of sf objects, one for each radius
+# We use 'lapply' to iterate through the radii
+buffer_plots <- lapply(radii, function(r) {
+  st_buffer(final_points, dist = r) %>%
+    mutate(buffer_radius = r)
+})
+
+# 3. If you want them all in one single object:
+all_buffers <- do.call(rbind, buffer_plots) %>%
+  mutate(unique_id = row_number())
+
+# 4. If you prefer separate objects in your environment:
+plots_100m <- buffer_plots[[1]]
+plots_250m <- buffer_plots[[2]]
+plots_500m <- buffer_plots[[3]]
+
+
+st_write(
+  obj = plots_100m,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "plots_100m",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+st_write(
+  obj = plots_250m,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "plots_250m",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+st_write(
+  obj = plots_500m,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "plots_500m",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```
+
+# Summary Statistics
+
+```{r}
+# Read in treatment layer
+treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
+
+# Calculate the total area of each circle plot
+all_buffers <- all_buffers %>%
+  mutate(total_plot_area = st_area(.))
+
+# Flatten the treatments into a single footprint
+treatments_union <- st_union(st_make_valid(treatments))
+
+# Intersect plots with treatments
+intersections <- st_intersection(all_buffers, treatments_union)
+
+# Sum treated area per plot
+treated_proportions <- intersections %>%
+  mutate(treated_area = st_area(.)) %>%
+  st_drop_geometry() %>%
+  # Adding total_plot_area to the group_by preserves it
+  group_by(unique_id, total_plot_area) %>% 
+  summarise(total_treated_area = sum(treated_area), .groups = "drop") %>%
+  # Now total_plot_area exists for this calculation
+  mutate(prop_treated = as.numeric(total_treated_area / total_plot_area))
+
+# 5. Join back to the original buffers to include 0s
+# (Plots with no treatment overlap are dropped in st_intersection)
+final_analysis <- all_buffers %>%
+  st_drop_geometry() %>%
+  left_join(treated_proportions) %>%
+  mutate(prop_treated = replace_na(prop_treated, 0))
+```
+
+```{r}
+ggplot(final_analysis, aes(x = prop_treated)) +
+  geom_histogram(fill = "steelblue", color = "white", bins = 20) +
+  # Create a separate panel for each radius
+  facet_wrap(~buffer_radius, labeller = label_both) + 
+  theme_minimal() +
+  labs(
+    title = "Distribution of Treatment Proportion by Buffer Size",
+    x = "Proportion of Area Treated (0.0 - 1.0)",
+    y = "Number of Plots"
+  ) +
+  scale_x_continuous(labels = scales::percent)
+```
+
+
+# Transect Selection
+
+This section selects transects entering and exiting treatment boundaries and control transects following methods outlined in Jones et al 2025. 
+
+## Fire Origin and prep
+
+The analysis begins by creating radial lines from the fire origin to the fire perimeter. We will start by filtering our fire occurrence data from InFORM to only include our fires of interest.
+
+InForm was downloaded here: https://data-nifc.opendata.arcgis.com/datasets/nifc::inform-fire-occurrence-data-records/about 
+
+```{r}
+occurrence <- st_read("data/spatial/InFORM_FireOccurrence_Public_1766480872051252493.gpkg")
+
+occurrence <- st_transform(occurrence, crs(fires))
+
+occurrence <- occurrence %>%
+  mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
+  filter(year(FireDiscoveryDateTime) >= 2010,
+         year(FireDiscoveryDateTime) <= 2024) %>%
+  mutate(occurrence_year = year(FireDiscoveryDateTime)) %>%
+  mutate(IncidentName = toupper(IncidentName))
+
+occurrence_in_fires <- st_join(
+  occurrence,
+  fires,
+  join = st_within,
+  left = FALSE
+) %>%
+  filter(occurrence_year == year,
+         IncidentName == Incid_Name) %>%
+  select(c("Event_ID", "Incid_Name", "InitialLatitude", "InitialLongitude", "Ig_Date", "year", "Area_SqM", "SHAPE" ))
+
+st_write(
+  obj = occurrence_in_fires,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "ignition points",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+#We need a csv as well for the ArcGIS methods
+# Extract the Projected Coordinates (X and Y)
+# This creates new columns for X and Y based on your SHAPE field
+coords <- st_coordinates(occurrence_in_fires)
+occurrence_in_fires$X_Coord <- coords[,1]
+occurrence_in_fires$Y_Coord <- coords[,2]
+
+# Drop the spatial geometry temporarily to work with it as a table
+occurrence_in_fires_df <- st_drop_geometry(occurrence_in_fires)
+
+# Calculate a distance for each fire so that the radial lines cover the fire
+occurrence_in_fires_df <- occurrence_in_fires_df %>%
+  mutate(LineDist = sqrt(Area_SqM) * 3)
+
+# 4. Create a data frame of angles
+angles <- data.frame(Bearing = 1:360)
+
+# 5. The "Cross Join": This multiplies your fires by the 360 angles
+# Every fire will now have 360 rows, one for each degree.
+radial_table <- occurrence_in_fires_df %>%
+  crossing(angles)
+
+# 6. Save as a CSV to bring back into ArcGIS Pro
+write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FALSE)
+```
+
+# Transect Generation
+
+Now in R I will generate transects of 10 points along the lines, with each point separated by 50m. All transects need to be 500m distance apart, meaning there will be fewer transects near the fire origin where the radial lines are closely spaced. Importantly, I want half control transects which do not intersect with treatments (a separate layer), and half treatment transects which include transects entering or exiting a treatment. For treatment transects, half (5) points should be in the transect and 5 outside.
+
+Steps: 
+1) Generate points every 50m along each radial line. Create columns with a line ID and distance along line.
+
+## Step 1: Generate points every 50m along each radial line. Create columns with a line ID and distance along line.
+
+In ArcGIS I created radial lines from the ignition points to the fire perimeter using the "Bearing Distance to Line" tools. This generated 360 geodetic lines to the fire perimeter.
+
+I then generated points along the lines, added the Event_ID from the radial lines, and did a spatial join with the fires layer using an attribute filter with Event_ID. This gives me points within the fire perimeter spaced every 50m (planar) from the ignition point.
+
+
+#Generate Points along lines 
+
+
+## Identify which transects (origins) intersect treatments (with 5 points in/out)
+
+```{r}
+#Collapse treatment dataset
+treatments <- st_make_valid(treatments)
+flat <- st_union(treatments)
+
+#load points
+points <- st_read("data/processed/AllPoints/AllPoints.shp")
+
+#label treated points
+spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
+points$is_treated <- rowSums(spiltmilk1) > 0
+
+#identify the treatment progression transects
+valid_origins <- points %>%
+  group_by(Incid_Name, Bearing) %>% 
+  arrange(ORIG_LEN, .by_group = TRUE) %>%
+  mutate(
+    # Count how many of the NEXT 5 points are treated
+    sum_next_5 = roll_sum(as.numeric(is_treated), n = 5, align = "left", fill = NA),
+    # Get the sum of the 5 points AFTER those (points 6-10)
+    sum_after_5 = lead(sum_next_5, 5)
+  ) %>%
+  filter(
+    (sum_next_5 == 5 & sum_after_5 == 0) | # 5 IN then 5 OUT
+    (sum_next_5 == 0 & sum_after_5 == 5)   # 5 OUT then 5 IN
+  ) %>%
+  mutate(type = ifelse(sum_next_5 == 5, "exiting", "entering")) %>%
+  ungroup()
+
+SumStatsB4 <- valid_origins %>%
+  group_by(Incid_Name) %>%
+  summarize(n = n(),
+            entering = sum(type == "entering"),
+            exiting = sum(type == "exiting"))
+
+colnames(points)
+colnames(valid_origins)
+```
+
+## Add points back to identified origins to create transects
+
+```{r}
+# 1) Order points and index within each radial
+pts <- points %>%
+  arrange(Event_ID, ORIG_FID, ORIG_SEQ) %>%
+  group_by(Event_ID, ORIG_FID) %>%
+  mutate(row = row_number()) %>%
+  ungroup()
+
+valid_origins <- st_drop_geometry(valid_origins)
+# 2) Get the origin row index for each valid origin
+origins <- pts %>%
+  semi_join(valid_origins,
+            by = c("Event_ID", "ORIG_FID", "ORIG_SEQ")) %>%
+  select(Event_ID, ORIG_FID, origin_row = row) %>%
+  st_drop_geometry()
+
+# 3) Keep origin + next 9 points (10 total)
+transects <- pts %>%
+  inner_join(origins, by = c("Event_ID", "ORIG_FID")) %>%
+  filter(row >= origin_row & row <= origin_row + 9) %>%
+  group_by(Event_ID, ORIG_FID, origin_row) %>%
+  filter(
+    n() == 10,                                # must have 10 points
+    (max(ORIG_SEQ) - min(ORIG_SEQ)) == 9,     # span must be 9
+    n_distinct(ORIG_SEQ) == 10                # no missing sequence numbers
+  ) %>%
+  ungroup()
+
+st_write(transects, "data/processed/TreatmentTransects/TreatmentTransects.shp", delete_dsn = TRUE)
+```
+
+## Make transects into line objects and enforce spacing
+
+```{r}
+transects <- transects %>%
+  group_by(Event_ID, ORIG_FID, origin_row) %>%
+  mutate(TransectID = cur_group_id()) %>%
+  ungroup()
+
+transect_lines <- transects %>%
+  arrange(Event_ID, ORIG_FID, TransectID, ORIG_SEQ) %>%  # ensure order!
+  group_by(TransectID, Event_ID, ORIG_FID) %>%
+  summarize(geometry = st_cast(st_combine(geometry), "LINESTRING"),
+            .groups = "drop")
+
+keep_indices <- c()
+remaining_indices <- 1:nrow(transect_lines)
+
+while (length(remaining_indices) > 0) {
+  # Pick the first (highest priority) line remaining
+  current_idx <- remaining_indices[1]
+  keep_indices <- c(keep_indices, current_idx)
+  
+  # Find all lines within 500m of this line
+  # st_is_within_distance returns a list; we check which lines intersect the buffer
+  too_close <- st_is_within_distance(transect_lines[current_idx, ], 
+                                    transect_lines[remaining_indices, ], 
+                                    dist = 500)[[1]]
+  
+  # Remove the current line and all "too close" lines from the pool
+  remaining_indices <- remaining_indices[-too_close]
+}
+
+# 4. Filter the original dataset
+thinned_transects <- transect_lines[keep_indices, ]
+
+st_write(thinned_transects, "data/processed/TreatmentTransects/FinalTreatmentTransects.shp", delete_dsn = TRUE)
+
+SumStatsAfter <- thinned_transects %>%
+  group_by(Event_ID) %>%
+  summarize(n = n())
+```
+
+```{r}
+
+st_write(valid_origins, "data/processed/TransectOrigins/TransectOrigins.shp", delete_dsn = TRUE)
+st_write(filter(points_flagged, is_start_of_group == TRUE), "data/processed/TransectOrigins/TreatmentOrigins.shp", delete_dsn = TRUE)
+# 2. Convert those points into 10-point LineStrings (Transects)
+final_transect_lines <- final_points_expanded %>%
+  group_by(FID_Radial, ORIG_SEQ.start) %>%
+  arrange(ORIG_SEQ) %>%
+  summarize(do_union = FALSE, .groups = "drop") %>% 
+  st_cast("LINESTRING")
+
+# 3. Export to ArcGIS
+st_write(final_transect_lines, "data/processed/Fire_Transects_Lines.shp", delete_dsn = TRUE)
+```
+
+
