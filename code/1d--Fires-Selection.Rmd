@@ -81,7 +81,7 @@ st_write(
   dsn = "data/processed/fuels_analysis.gpkg",
   layer = "fires",
   driver = "GPKG",
-  delete_dsn = TRUE
+  delete_layer = TRUE
 )
 
 
@@ -122,31 +122,4 @@ library(terra)
 crs(GEEFires)
 ```
 
-
-# Make a map of selected fires
-
-```{r}
-CO <- st_read("data/spatial/States/cb_2018_us_state_20m.shp") %>%
-  st_transform(st_crs(fires_sub)) %>%
-  filter(NAME == "Colorado")
-
-cities <- st_read("data/spatial/Cities/Colorado_City_Point_Locations.shp") %>%
-  st_transform(st_crs(fires_sub)) %>%
-  filter(name %in% c("Fort Collins", "Denver", "Colorado Springs",
-                 "Grand Junction", "Durango", "Vail"))
-
-
-# Plot states first as the basemap
-plot(st_geometry(CO), col = "white", border = "black")
-
-# Add city points
-plot(st_geometry(cities), add = TRUE, pch = 20, cex = 0.5, col = "purple", border = "black")
-
-# Add your fire perimeters
-plot(st_geometry(fires_sub), add = TRUE, border = "orange", col = "orange")
-
-# Add your treatments layer
-plot(st_geometry(inter_sub), add = TRUE, border = "blue")
-
-```
 
