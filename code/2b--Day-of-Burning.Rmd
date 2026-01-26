@@ -36,10 +36,9 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # im
   mutate(Fire_Year=as.character(year)) %>%
   mutate(Fire_Month = lubridate::month(date)) %>%
   mutate(Fire_Day = lubridate::day(date)) %>%
-  select(Fire_ID, Fire_Year, Fire_Month, Fire_Day) %>% 
-  st_transform("EPSG:5070") %>%
-  filter(Fire_ID != "CO3701810400020200822")  #Remove East fork which is not in wfigs
-  # filter(Fire_ID != "CO4071610803320140723") #just having issues with this one
+  select(Fire_ID, Incid_Name, Fire_Year, Fire_Month, Fire_Day) %>% 
+  st_transform("EPSG:5070")
+  #filter(Fire_ID != "CO4071610803320140723") #just having issues with this one
  
 wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
   filter(poly_FeatureCategory=="Wildfire Final Fire Perimeter") %>% #(n=16775)
@@ -53,29 +52,29 @@ wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146
 
 ```
 
-## Modified code from HartLab
+## Modified code from HartLab modified from harris paper
 
 ```{r}
-for (j in unique(fires$Fire_ID)){
-  if(!file.exists(here("data", "processed", "DOB",  paste0(j, "_DOB.tif")))){
-    basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", paste0(j, "_CBI_bc.tif")))
-    basegrid[] <- 1 # replace all values with 0
+for (j in unique(fires$Fire_ID)){ #for each unique fire_id, call it j
+  if(!file.exists(here("data", "processed", "DOB",  paste0(j, "_DOB.tif")))){ #if the day of burning file does not already exist
+    basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", paste0(j, "_CBI_bc.tif")))  #load the cbi raster created in GEE
+    basegrid[] <- 1 # replace all values with 0 - ask Sarah if I did this or her, why 1? try also 0
     
-    perimeter <- fires[fires$Fire_ID == j, ] 
+    perimeter <- fires[fires$Fire_ID == j, ] #index fires to the jth fire id, and keep all the columns
     
-    #1.1 Add start and end dates using WFIGS or MTBS (if outside WFIGS years)
-    if(perimeter$Fire_Year %in% 2020:2024){
-      centroidj<- st_centroid(perimeter)
-      wfigsj <- wfigs %>% filter(YEAR == perimeter$Fire_Year)
-      wfigsj <- st_join(centroidj, wfigsj, join = st_within, left = FALSE)
+    #1.1 Add start and end dates using WFIGS or MTBS (if outside WFIGS years, complete data starting 2021)
+    if(perimeter$Fire_Year %in% 2021:2024){ 
+      centroidj<- st_centroid(perimeter) 
+      wfigsj <- wfigs %>% filter(YEAR == perimeter$Fire_Year) #filter wfigs to the year of the fire
+      wfigsj <- st_join(centroidj, wfigsj, join = st_within, left = FALSE) #find centroidj within wfigs and return only rows from centroidj that match, with all columns and centroid geometry
       perimeter <- perimeter %>%  
         mutate(STARTDATE=as.Date(paste( wfigsj$YEAR, wfigsj$STARTMONTH, wfigsj$STARTDAY, sep="-"))) %>% 
-        mutate(ENDDATE=as.Date(paste(year(wfigsj$attr_ContainmentDateTime), month(wfigsj$attr_ContainmentDateTime), day(wfigsj$attr_ContainmentDateTime), sep="-") ))
-    }else{
-      wfigsj <- wfigs %>% st_drop_geometry() %>% summarize(start=min(as.numeric(start.doy), na.rm=T), end=max(as.numeric(contain.doy), na.rm=T))
+        mutate(ENDDATE=as.Date(paste(year(wfigsj$attr_ContainmentDateTime), month(wfigsj$attr_ContainmentDateTime), day(wfigsj$attr_ContainmentDateTime), sep="-") )) #add the start date and end date to our perimeter object from wfigs
+    }else{ #if NOT a 2020-2024 fire
+      wfigsj <- wfigs %>% st_drop_geometry() %>% summarize(start=min(as.numeric(start.doy), na.rm=T), end=max(as.numeric(contain.doy), na.rm=T)) #take the range of fire start/contain dates within the wfigs dataset
       perimeter <- perimeter %>%  
         mutate(STARTDATE=as.Date(paste(perimeter$Fire_Year, perimeter$Fire_Month, perimeter$Fire_Day, sep="-"))) %>% 
-        mutate(ENDDATE=365) # does this need to be adjusted as a date?
+        mutate(ENDDATE=365) # why take min and max from wfigs if not used? how does 365 work if other dates are formatted differently?
     }
     
     perimeter <- terra::project(vect(perimeter), crs(basegrid))
@@ -95,7 +94,7 @@ for (j in unique(fires$Fire_ID)){
     hotspots$ACQ_TIME <- as.numeric(format(hotspots$acq_time, digits=4))/2400
     hotspots$YEAR  <- lubridate::year(hotspots$acq_date)
     hotspots$JDAYDEC  <- hotspots$JDAY + hotspots$ACQ_TIME
-    
+
     #Crop to perimeter date. In this case, maximum allowable error is 30 days.
     hotspots <- hotspots %>% dplyr::filter(YEAR == perimeter$Fire_Year, 
                                            JDAY >= lubridate::yday(perimeter$STARTDATE) - 30)
@@ -116,11 +115,10 @@ for (j in unique(fires$Fire_ID)){
     grid.pt <- st_as_sf(grid.pt, as_points = TRUE, merge = FALSE)
     
     #Time zone correction - here assume daylight savings time and only one time zone
-    # Assume all observations are in Mountain Daylight Time (UTC-6)
+    # All observations are in Mountain Time daylight savings (UTC-6)
     timezone_offset <- -6  # hours
     hotspots$JDAYDEC <- hotspots$JDAYDEC + timezone_offset/24
     hotspots <- st_as_sf(hotspots) #gstat needs sf
-
     #kriging
     dob.kriged <- gstat::variogram(JDAYDEC ~ 1, hotspots)
     dob.fit <- gstat::fit.variogram(dob.kriged, gstat::vgm(c("Exp", "Sph", "Mat")))
