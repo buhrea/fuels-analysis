@@ -209,7 +209,7 @@ InForm (NIFC) was downloaded here: https://data-nifc.opendata.arcgis.com/dataset
 Fire Program Analysis fire-occurrence database (FPA FOD) (USDA, 1992-2020) was subset to Colorado then downloaded here:
 
 ```{r}
-inform <- st_read("data/spatial/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
+occurrence <- st_read("data/spatial/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
   st_transform(crs(fires)) %>%
   mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
   filter(year(FireDiscoveryDateTime) >= 2010,
@@ -217,18 +217,6 @@ inform <- st_read("data/spatial/InFORM_FireOccurrence_Public_1766480872051252493
   mutate(occurrence_year = year(FireDiscoveryDateTime)) %>%
   mutate(IncidentName = toupper(IncidentName))%>%
   select(occurrence_year, IncidentName)
-
-st_geometry(inform) <- "geometry" #Rename "SHAPE"
-
-fod <- st_read("data/spatial/National_Interagency_Fire_Occurrence_Sixth_Edition_1992-2020_(Feature_Layer)/National_Interagency_Fire_Occurrence_Sixth_Edition_1992-2020_(Feature_Layer).shp") %>%
-  st_transform(crs(fires)) %>%
-  filter(FIRE_YEAR >=2010,
-         FIRE_YEAR <= 2020) %>%
-  mutate(occurrence_year = FIRE_YEAR) %>%
-  mutate(IncidentName = FIRE_NAME) %>%
-  select(occurrence_year, IncidentName)
-
-occurrence <- bind_rows(inform, fod)
 
 occurrence_in_fires <- st_join(
   occurrence,
@@ -276,7 +264,7 @@ write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FAL
 
 I then generated points along the lines, added the Event_ID from the radial lines, and did a spatial join with the fires layer using an attribute filter with Event_ID. This gives me points within the fire perimeter spaced every 50m (planar) from the ignition point. 
 
-## Identify which transects (set of 10 sequential points) intersect treatments with 5 points in/out
+## Step 2: Identify which transects (set of 10 sequential points) intersect treatments with 5 points in/out
 
 ```{r}
 #load points
