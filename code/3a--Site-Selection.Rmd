@@ -54,7 +54,7 @@ fire_interiors <- fire_interiors[!st_is_empty(fire_interiors), ]
 sample_with_min_dist <- function(polygon, min_dist = 1000) {
   # Start with an initial random sample (oversample slightly)
   # We use "regular" or "random" then filter
-  pts <- st_sample(polygon, size = 50) # Adjust size based on fire area
+  pts <- st_sample(polygon, size = 1000) #adjust size as desired 
   
   if (length(pts) == 0) return(NULL)
   
@@ -147,7 +147,8 @@ st_write(
 ```{r}
 #Collapse treatment dataset
 treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
-  st_make_valid() 
+  st_make_valid() %>%
+  st_transform(26913)
 flat <- st_union(treatments)
 
 # Calculate the total area of each circle plot
@@ -206,8 +207,6 @@ Before generating lines in ArcGIS, we will prepare our data by filtering our fir
 
 InForm (NIFC) was downloaded here: https://data-nifc.opendata.arcgis.com/datasets/nifc::inform-fire-occurrence-data-records/about 
 
-Fire Program Analysis fire-occurrence database (FPA FOD) (USDA, 1992-2020) was subset to Colorado then downloaded here:
-
 ```{r}
 occurrence <- st_read("data/spatial/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
   st_transform(crs(fires)) %>%
@@ -261,6 +260,22 @@ radial_table <- occurrence_in_fires_df %>%
 # Save as a CSV to bring back into ArcGIS Pro
 write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FALSE)
 ```
+
+For the two fires where the ignition point is outside of the fire perimeter, take the centroid of the day 1 of burning from DOB.
+
+```{r}
+library(raster)
+christine <- raster("data/processed/DOB/CO3937110704320180703_DOB.tif")
+#create polygon from day 1 value
+christine1 <- rasterToPolygons(christine, fun=function(value){value==185}, dissolve=FALSE)
+
+
+junkins <- raster("data/processed/DOB/CO3816110519920161017_DOB.tif")
+junkins1 <- rasterToPolygons(junkins, fun=function(value){value==291}, dissolve=TRUE)
+plot(junkins1)
+```
+
+
 
 I then generated points along the lines, added the Event_ID from the radial lines, and did a spatial join with the fires layer using an attribute filter with Event_ID. This gives me points within the fire perimeter spaced every 50m (planar) from the ignition point. 
 
@@ -374,6 +389,5 @@ SumStatsAfter
 ```{r}
 
 ```
-
 
 ## Select control transects 

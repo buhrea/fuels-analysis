@@ -1,8 +1,8 @@
 ---
-title: "2a--Overlay-Burn-Severity"
+title: "3b--Joining-Covariates"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
-output: html_document
+output: pdf_document
 ---
 
 ```{r setup, include=FALSE}

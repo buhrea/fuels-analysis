@@ -25,7 +25,7 @@ library(tidyverse)
 # 1. Data Organization
 
 ```{r}
-target_crs <- "EPSG:5070"
+target_crs <- "EPSG:26913"
 ```
 
 ## Load Forest Tracker 

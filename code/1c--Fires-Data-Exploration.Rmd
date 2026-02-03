@@ -52,7 +52,7 @@ gdf_fires_area <- fires %>%
     total_fire_area_ha = as.numeric(st_area(geom)) / 10000
   ) %>%
   st_drop_geometry() %>% # Drop geometry
-  select(!!sym(fire_id_column), total_fire_area_ha)
+  dplyr::select(!!sym(fire_id_column), total_fire_area_ha)
 
 
 
@@ -74,11 +74,15 @@ analysis_data <- analysis_data %>%
   # Filter out any fires with 0 area (just in case)
   filter(total_fire_area_ha > 0)
 
+analysis_data1 <- filter(analysis_data, proportion_treated < 0.99)
+mean(analysis_data1$proportion_treated)
+range(analysis_data1$proportion_treated)
+
 # Create the histogram using ggplot2
 ggplot(data = analysis_data, aes(x = proportion_treated)) +
   geom_histogram(bins = 20) +
   labs(
-    title = "Distribution of Proportion of Fire Area Treated (2015-2024)",
+    title = "Distribution of Proportion of Fire Area Treated (2010-2024)",
     x = "Proportion Treated (0 to 1)",
     y = "Number of Fires (Frequency)"
   ) +
@@ -101,7 +105,7 @@ treatment_area_data_by_type <- intersection %>%
   ) %>%
   st_drop_geometry() %>% # Drop geometry for plotting efficiency
   # Select only the required columns for plotting and comparison
-  select(MGT_TYPE, treatment_size_ha)
+  dplyr::select(MGT_TYPE, treatment_size_ha)
 
 #Summary statistics
 SizeSumStats <- treatment_area_data_by_type %>%
@@ -184,7 +188,7 @@ for (name in fire_names) {
 # 4. Create Final Table
 elev_table <- do.call(rbind, results_list) %>%
   tibble::rownames_to_column(var = "ID") %>% # Clean up row names
-  select(-ID)
+  dplyr::select(-ID)
 ```
 
 # Create the Final Table
@@ -216,7 +220,7 @@ char_table <- char_table %>%
 # 3. Select and Rename Final Columns
 result_table <- char_table %>%
   arrange(desc(proportion_treated)) %>%
-  select(
+  dplyr::select(
     Event_ID, Incid_Name, 
     year,
     'Fire_Area' = total_fire_area_ha, 

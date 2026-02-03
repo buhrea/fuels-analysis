@@ -36,7 +36,7 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # im
   mutate(Fire_Year=as.character(year)) %>%
   mutate(Fire_Month = lubridate::month(date)) %>%
   mutate(Fire_Day = lubridate::day(date)) %>%
-  select(Fire_ID, Incid_Name, Fire_Year, Fire_Month, Fire_Day) %>% 
+  dplyr::select(Fire_ID, Incid_Name, Fire_Year, Fire_Month, Fire_Day) %>% 
   st_transform("EPSG:5070")
   #filter(Fire_ID != "CO4071610803320140723") #just having issues with this one
  
@@ -70,7 +70,7 @@ for (j in unique(fires$Fire_ID)){ #for each unique fire_id, call it j
       perimeter <- perimeter %>%  
         mutate(STARTDATE=as.Date(paste( wfigsj$YEAR, wfigsj$STARTMONTH, wfigsj$STARTDAY, sep="-"))) %>% 
         mutate(ENDDATE=as.Date(paste(year(wfigsj$attr_ContainmentDateTime), month(wfigsj$attr_ContainmentDateTime), day(wfigsj$attr_ContainmentDateTime), sep="-") )) #add the start date and end date to our perimeter object from wfigs
-    }else{ #if NOT a 2020-2024 fire
+    }else{ #if NOT a 2021-2024 fire
       wfigsj <- wfigs %>% st_drop_geometry() %>% summarize(start=min(as.numeric(start.doy), na.rm=T), end=max(as.numeric(contain.doy), na.rm=T)) #take the range of fire start/contain dates within the wfigs dataset
       perimeter <- perimeter %>%  
         mutate(STARTDATE=as.Date(paste(perimeter$Fire_Year, perimeter$Fire_Month, perimeter$Fire_Day, sep="-"))) %>% 

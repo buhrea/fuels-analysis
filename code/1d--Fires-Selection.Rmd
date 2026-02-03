@@ -113,7 +113,7 @@ st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # import sele
   mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
   mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
   mutate(Fire_Year=as.character(year), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
-  select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
+  dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
   st_write("data/processed/GEE/fires_GEE.shp", delete_dsn = TRUE)
 
 
