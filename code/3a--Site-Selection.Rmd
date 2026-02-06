@@ -24,7 +24,7 @@ Transect Selection:
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-Load packages
+# Load packages
 ```{r}
 library(tidyverse)
 library(sf)
@@ -210,7 +210,7 @@ InForm (NIFC) was downloaded here: https://data-nifc.opendata.arcgis.com/dataset
 Two fires (Junkins and Lake Christine) have ignition points outside of the fire perimeters. The Junkins point of origin was thus gathered from this report: https://wildfiretoday.com/tag/junkins-fire/. The Lake Christine point of origin was approximated as the southern most point (while the southern most point may be slightly west of the actual origin, due to a change in wind direction it should be more accurate for approximating fire spread).
 
 ```{r occurrence-prep}
-occurrence <- st_read("data/spatial/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
+occurrence <- st_read("data/raw/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
   st_transform(target_crs) %>%
   mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
   filter(year(FireDiscoveryDateTime) >= 2010,

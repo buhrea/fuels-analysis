@@ -1,4 +1,4 @@
-# *Code for: XXX*
+# *Code for: Elizabeth Buhr's Master's Thesis!*
 
 ## Description of the project
 
