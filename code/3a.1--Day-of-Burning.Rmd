@@ -25,7 +25,7 @@ This code creates day of burning (DOB) maps for each fire following methods outl
 
 ```{r}
 #CO
-CO<- st_read("data/spatial/States/cb_2018_us_state_20m.shp") %>% 
+CO<- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>% 
    filter(STUSPS =="CO") %>%
    st_transform("EPSG:5070") %>% # transform to Albers Equal-Area Conic (USGS)
    st_union() 
@@ -38,9 +38,9 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # im
   mutate(Fire_Day = lubridate::day(date)) %>%
   dplyr::select(Fire_ID, Incid_Name, Fire_Year, Fire_Month, Fire_Day) %>% 
   st_transform("EPSG:5070")
-  #filter(Fire_ID != "CO4071610803320140723") #just having issues with this one
+  #filter(Fire_ID != "CO4071610803320140723") #Alkali - too few hotspots for kriging having issues with this one
  
-wfigs <- st_read("data/spatial/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
+wfigs <- st_read("data/raw/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
   filter(poly_FeatureCategory=="Wildfire Final Fire Perimeter") %>% #(n=16775)
   st_transform("EPSG:5070") %>%# transform to Albers Equal-Area Conic (USGS)
   st_crop(CO) %>% 
@@ -80,9 +80,9 @@ for (j in unique(fires$Fire_ID)){ #for each unique fire_id, call it j
     perimeter <- terra::project(vect(perimeter), crs(basegrid))
     
     # 1.2 Process hotspots. Here we assume FIRMs ------------------------------
-    modis_hotspots <- read.csv(here("data", "spatial", "Fire", "MODIS", "modis", perimeter$Fire_Year, paste0("modis_", perimeter$Fire_Year, "_United_States.csv")))
+    modis_hotspots <- read.csv(here("data", "raw", "Fire", "MODIS", "modis", perimeter$Fire_Year, paste0("modis_", perimeter$Fire_Year, "_United_States.csv")))
     if(perimeter$Fire_Year %in% 2012:2024){
-      viirs_hotspots <- read.csv(here("data", "spatial", "Fire", "VIIRS", "viirs-snpp", perimeter$Fire_Year, paste0("viirs-snpp_", perimeter$Fire_Year, "_United_States.csv")))
+      viirs_hotspots <- read.csv(here("data", "raw", "Fire", "VIIRS", "viirs-snpp", perimeter$Fire_Year, paste0("viirs-snpp_", perimeter$Fire_Year, "_United_States.csv")))
     
       names(viirs_hotspots) <- names(modis_hotspots)
       hotspots  <- rbind(modis_hotspots, viirs_hotspots)
