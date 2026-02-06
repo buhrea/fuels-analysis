@@ -29,7 +29,7 @@ library(scales) #graphical scales in ggplot (entity plot)
 # 1. Data Head
 ```{r}
 #path to file (accessed 10/7/25)
-permits <- read.csv("data/spatial/rx_permit_db_share/analysis_16Sept2025.csv")
+permits <- read.csv("data/raw/rx_permit_db_share/analysis_16Sept2025.csv")
   # 174122 observations
 
 #check column names and values

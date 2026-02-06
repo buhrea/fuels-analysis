@@ -34,7 +34,7 @@ This file is missing an assigned CRS and includes complex geometry types which a
 
 ```{r}
 #read file 
-treats <- st_read("data/spatial/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg")
+treats <- st_read("data/raw/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg")
 
 #Missing crs - found from information tab in qgis (EPSG:26913 - NAD83 / UTM zone 13N)
 st_crs(treats) <- 26913
@@ -54,7 +54,7 @@ I am filtering for fires from 2015 on (trying 2010 11/18/25). Perimeter data was
 
 ```{r}
 # Using perimeter data for 1984-2024
-fires <- st_read("data/spatial/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+fires <- st_read("data/raw/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
   st_transform(target_crs) %>% 
   mutate(Ig_Date = as.Date(Ig_Date), year=year(Ig_Date)) %>%   # convert to date
   filter(year>=2010) %>%  # filter for fires that occurred in or after 2015

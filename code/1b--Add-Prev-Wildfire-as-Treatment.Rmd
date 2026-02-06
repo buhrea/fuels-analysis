@@ -40,7 +40,7 @@ Load MTBS
 
 ```{r}
 # Using perimeter data for 1984-2024
-allfires <- st_read("data/spatial/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+allfires <- st_read("data/raw/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
   st_transform(target_crs) %>% 
   mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
   filter(Incid_Type=="Wildfire") %>%

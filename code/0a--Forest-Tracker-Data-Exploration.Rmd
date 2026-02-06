@@ -28,7 +28,7 @@ library(ggplot2)
 # 1. Data Structure
 ```{r}
 #path to file (accessed 10/2/25)
-treats_path <- "data/spatial/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg"
+treats_path <- "data/raw/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg"
 
 #check layer name
 st_layers(treats_path)

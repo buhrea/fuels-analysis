@@ -122,7 +122,7 @@ SizeSumStats
 # Elevation
 ```{r}
 # Load the elevation raster
-elevation_rast <- rast("data/spatial/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif")
+elevation_rast <- rast("data/raw/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif")
 
 # Corrected get_elevation_range function
 get_elevation_range <- function(geometry, raster) {
