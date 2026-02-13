@@ -143,11 +143,37 @@ range(treats$YEAR_COMP)
 ## 2.4 FOR_TYPE
 ```{r}
 # FOR_TYPE barplot
-ggplot(treats, aes(x = FOR_TYPE)) +
-  geom_bar(fill = "seagreen") +
+treats <- treats %>%
+  filter(FOR_TYPE != "None") %>%
+  drop_na(FOR_TYPE)
+
+forestplot <- ggplot(treats, aes(x = FOR_TYPE)) +
+  geom_bar(fill = "darkblue") +
   theme_bw() +
   labs(title = "Forest Type", x = NULL, y = "Count") +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme(
+  axis.text.x  = element_text(size = 45, angle = 45, hjust = 1),
+  axis.text.y  = element_text(size = 45),
+  axis.title.y = element_text(size = 50),
+  plot.title   = element_text(size = 55, face = "bold")
+)
+
+ggsave(
+  filename = "forest_type.png",
+  plot = forestplot,
+  width = 10.5,
+  height = 7,      # adjust as needed
+  units = "in",
+  dpi = 300
+)
+
+SumForest <- treats %>%
+  st_drop_geometry() %>%
+  group_by(FOR_TYPE) %>%
+  summarise(n = n(),
+            percent = (n()/24666)*100)
+
 ```
 
 ## 2.5 ACRES_MGT

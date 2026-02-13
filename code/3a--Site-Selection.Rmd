@@ -373,7 +373,7 @@ transect_pts <- pts %>%
   ungroup()
 ```
 
-### Make transects into line objects and enforce spacing
+## Step 3: Make transects into line objects and enforce spacing
 
 ```{r}
 transect_pts <- transect_pts %>%

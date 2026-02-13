@@ -1,0 +1,90 @@
+---
+title: "0a--Data-Download"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(here)
+```
+
+# Weather
+
+(maximum temperature, wind velocity, relative humidity, VPD) 
+(Palmer Drought Severity Index (PDSI), Energy Release Component, 100- and 1000-hour dead fuel moisture)
+FWI? 
+
+```{r}
+## Maximum temperature
+dir.create(here("data", "raw", "GridMet", "TMax"), showWarnings = FALSE) 
+for(j in 2010:2024){ 
+  if(!file.exists(here("data", "raw", "GridMet", "TMax", paste0("tmmx_", j, ".nc")))){ 
+  temp <- here("data", "raw", "GridMet", "TMax", paste0("tmmx_", j, ".nc")) 
+  download.file(paste0("https://www.northwestknowledge.net/metdata/data/tmmx_", j, ".nc"), temp, mode="wb") 
+  }
+}
+
+## Precipitation
+dir.create(here("data", "raw", "GridMet", "PR"), showWarnings = FALSE)
+for(j in 2010:2024){
+  if(!file.exists(here("data", "raw", "GridMet", "PR", paste0("pr_", j, ".nc")))){
+  temp <- here("data", "raw", "GridMet", "PR", paste0("pr_", j, ".nc"))
+  download.file(paste0("https://www.northwestknowledge.net/metdata/data/pr_", j, ".nc"), temp, mode="wb")
+  }
+}
+
+## Wind velocity
+dir.create(here("data", "raw", "GridMet", "VS"), showWarnings = FALSE) 
+for(j in 2010:2024){ 
+  if(!file.exists(here("data", "raw", "GridMet", "VS", paste0("vs_", j, ".nc")))){ 
+  temp <- here("data", "raw", "GridMet", "VS", paste0("vs_", j, ".nc")) 
+  download.file(paste0("https://www.northwestknowledge.net/metdata/data/vs_", j, ".nc"), temp, mode="wb") 
+  }
+}
+
+## VPD 
+dir.create(here("data", "raw", "GridMet", "VPD"), showWarnings = FALSE)
+for(j in 2010:2024){
+  if(!file.exists(here("data", "raw", "GridMet", "VPD", paste0("vpd_", j, ".nc")))){
+  temp <- here("data", "raw", "GridMet", "VPD", paste0("vpd_", j, ".nc"))
+  download.file(paste0("https://www.northwestknowledge.net/metdata/data/vpd_", j, ".nc"), temp, mode="wb")
+  }
+}
+
+## Palmer Drought Severity Index 
+dir.create(here("data", "raw", "GridMet", "PDSI"), showWarnings = FALSE)
+for(j in 2010:2024){
+  if(!file.exists(here("data", "raw", "GridMet", "PDSI", paste0("pdsi", ".nc")))){
+  temp <- here("data", "raw", "GridMet", "PDSI", paste0("pdsi", ".nc"))
+  download.file(paste0("https://www.northwestknowledge.net/metdata/data/pdsi", ".nc"), temp, mode="wb")
+  }
+}
+
+## ERC
+dir.create(here("data", "raw", "GridMet", "ERC"), showWarnings = FALSE)
+for(j in 2010:2024){
+  if(!file.exists(here("data", "raw", "GridMet", "ERC", paste0("erc_", j, ".nc")))){
+  temp <- here("data", "raw", "GridMet", "ERC", paste0("erc_", j, ".nc"))
+  download.file(paste0("https://www.northwestknowledge.net/metdata/data/erc_", j, ".nc"), temp, mode="wb")
+  }
+}
+```
+
+# Pre-Fire Fuels
+
+```{r}
+# Canopy Cover
+if(!dir.exists( here("data", "raw", "LANDFIRE", "US_105_CC"))){
+  temp <- here("data", "raw", "LANDFIRE", "US_105_CC.zip")
+  download.file("https://landfire.gov/data-downloads/US_105/US_105_CC.zip", temp, mode="wb")
+  unzip(temp, exdir=here("data", "raw", "LANDFIRE"))
+  file.remove(temp)
+}
+```
+
