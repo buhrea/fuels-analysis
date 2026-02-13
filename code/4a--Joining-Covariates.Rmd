@@ -7,10 +7,10 @@ output: pdf_document
 
 This document will join covariates from various data sources with the selected multi-scale plots and fine-scale progression transects. Covariates are in several groups:
 
-Topographic
-Weather & Climate
-Pre-Fire Fuels
-Treatment Characteristics
+Topographic - LANDFIRE - Aspect, Elevation, and Slope
+Weather & Climate - gridMET - maximum temperature, precipitation, wind velocity, vpd, pdsi, erc
+Pre-Fire Fuels - LANDFIRE
+Treatment Characteristics - Forest Tracker
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -19,22 +19,64 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(sf)
+library(terra)
 ```
+
+```{r}
+target_crs <- "EPSG:26913"
+
+CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+  filter(NAME == "Colorado") %>%
+  st_transform("EPSG:5070") #match to crs of landfire for cropping
+```
+
 
 # Topography
 
-Elevation, northness, and slope were gathered from LANDFIRE.
+Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted into "northness" and "eastness".
 
 ## Load data
 
 ```{r}
+aspect <- rast("data/raw/LANDFIRE/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif") %>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
 
+#in landfire, flat areas are coded as -1. change to na
+aspect[aspect == -1] <- NA
+
+northness <- cos(aspect * pi / 180)
+eastness <- sin(aspect * pi / 180)
+
+elevation <- rast("data/raw/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif") %>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
+
+slope <- rast("data/raw/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
 ```
 
 ## Transects Join
 
 ```{r}
+transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") 
 
+north_trans <- extract(northness, transects)
+east_trans <- extract(eastness, transects)
+elev_trans <- extract(elevation, transects)
+slope_trans <- extract(slope, transects)
+
+transects <- transects %>%
+  cbind(north_trans, east_trans, elev_trans, slope_trans) %>%
+  select(-starts_with("ID")) %>%
+  rename("northness" = "LF2020_Asp_CONUS",
+         "eastness" = "LF2020_Asp_CONUS.1",
+         "elevation" = "LC20_Elev_220",
+         "slope" = "LF2020_SlpD_CONUS")
 ```
 
 ## Plots Join
@@ -45,7 +87,7 @@ Elevation, northness, and slope were gathered from LANDFIRE.
 
 # Weather & Climate
 
-Elevation, northness, and slope were gathered from LANDFIRE.
+Most weather variables were obtained from gridMET. FWI (and maybe PDSI?) obtained from X. 
 
 ## Load data
 
