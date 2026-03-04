@@ -150,13 +150,13 @@ treats <- treats %>%
 forestplot <- ggplot(treats, aes(x = FOR_TYPE)) +
   geom_bar(fill = "darkblue") +
   theme_bw() +
-  labs(title = "Forest Type", x = NULL, y = "Count") +
+  labs(title = "Treatments by Forest Type", x = NULL, y = "Count") +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
   theme(
   axis.text.x  = element_text(size = 45, angle = 45, hjust = 1),
   axis.text.y  = element_text(size = 45),
-  axis.title.y = element_text(size = 50),
-  plot.title   = element_text(size = 55, face = "bold")
+  axis.title.y = element_text(size = 45),
+  plot.title   = element_text(size = 45, face = "bold")
 )
 
 ggsave(
@@ -258,6 +258,12 @@ treats %>%
   arrange(MGT_TYPE) %>%
   mutate(avg_acres = round(avg_acres, 2)) %>%  
   kable(col.names = c("Treatment Type", "Mean Acres"), align = "lc")
+
+treats %>%
+  filter(MGT_TYPE == "RX FIRE") %>%
+  st_drop_geometry() %>%
+  group_by(RXFIRE_MGT) %>%
+  summarise(n = n())
 ```
 
 Let's also check size of broadcast burning versus pile burning.

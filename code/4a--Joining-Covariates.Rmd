@@ -7,10 +7,12 @@ output: pdf_document
 
 This document will join covariates from various data sources with the selected multi-scale plots and fine-scale progression transects. Covariates are in several groups:
 
+Pre-Processing - Day of Burning
 Topographic - LANDFIRE - Aspect, Elevation, and Slope
 Weather & Climate - gridMET - maximum temperature, precipitation, wind velocity, vpd, pdsi, erc
 Pre-Fire Fuels - LANDFIRE
 Treatment Characteristics - Forest Tracker
+Response Variable - CBI+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -25,11 +27,24 @@ library(terra)
 ```{r}
 target_crs <- "EPSG:26913"
 
+transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") 
+
 CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
   filter(NAME == "Colorado") %>%
   st_transform("EPSG:5070") #match to crs of landfire for cropping
 ```
 
+# Pre-processing
+
+We will need to know Day of Burning when we get to our weather variables. Adding that here.
+
+```{r}
+doblist <- list.files(path = "C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/DOB", pattern = "\\.tif$", full.names = TRUE)
+dob_rast <- lapply(doblist, terra::rast)
+
+crs(dob_rast[[1]])
+
+```
 
 # Topography
 
@@ -63,8 +78,6 @@ slope <- rast("data/raw/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %
 ## Transects Join
 
 ```{r}
-transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") 
-
 north_trans <- extract(northness, transects)
 east_trans <- extract(eastness, transects)
 elev_trans <- extract(elevation, transects)
@@ -99,6 +112,54 @@ Most weather variables were obtained from gridMET. FWI (and maybe PDSI?) obtaine
 
 ```{r}
 
+```
+
+## Plots Join
+
+```{r}
+
+```
+
+
+# Vegetation & Pre-Fire Fuels
+
+Data is obtained from Landfire. Pre-fire vegetation is represented by the Environmental Site Potential. Pre-fire fuels are represented by Canopy Cover, which I would say is associated with the risk of high-severity crown fire.
+
+## Load data
+
+```{r}
+regime <- rast("data/raw/LANDFIRE/LF2016_FRG_200_CONUS/LF2016_FRG_200_CONUS_20250814/LF2016_FRG_200_CONUS/Tif/LC16_FRG_200.tif") %>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
+
+esp <- rast("data/raw/LANDFIRE/US_140_ESP/Tif/us_140esp.tif") %>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
+activeCat(esp) <- "ESP_NAME"
+
+evt <- rast("data/raw/LANDFIRE/LF2024_EVT_CONUS/Tif/LF2024_EVT_CONUS.tif")%>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
+```
+
+## Transects Join
+
+```{r}
+regime_trans <- extract(regime, transects)
+esp_trans <- extract(esp, transects)
+evt_trans <- extract(evt, transects)
+
+transects <- transects %>%
+  cbind(regime_trans, esp_trans, evt_trans) %>%
+  select(-starts_with("ID")) %>%
+  rename("regime" = "BPS_NAME",
+         "esp" = "ESP_NAME",
+         "evt" = "EVT_NAME")
+
+summary(transects)
 ```
 
 ## Plots Join
