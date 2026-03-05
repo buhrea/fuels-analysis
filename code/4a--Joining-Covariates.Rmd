@@ -8,11 +8,17 @@ output: pdf_document
 This document will join covariates from various data sources with the selected multi-scale plots and fine-scale progression transects. Covariates are in several groups:
 
 Pre-Processing - Day of Burning
+
 Topographic - LANDFIRE - Aspect, Elevation, and Slope
+
 Weather & Climate - gridMET - maximum temperature, precipitation, wind velocity, vpd, pdsi, erc
-Pre-Fire Fuels - LANDFIRE
+
+Pre-Fire Fuels - LANDFIRE ESP, NLCD Canopy Cover
+
 Treatment Characteristics - Forest Tracker
+
 Response Variable - CBI+
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -27,14 +33,11 @@ library(terra)
 ```{r}
 target_crs <- "EPSG:26913"
 
-transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") 
-
-CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
-  filter(NAME == "Colorado") %>%
-  st_transform("EPSG:5070") #match to crs of landfire for cropping
+transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") %>%
+  filter(Incid_Name != "ALKALI")
 ```
 
-# Pre-processing
+# Day of Burning
 
 We will need to know Day of Burning when we get to our weather variables. Adding that here.
 
@@ -42,8 +45,44 @@ We will need to know Day of Burning when we get to our weather variables. Adding
 doblist <- list.files(path = "C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/DOB", pattern = "\\.tif$", full.names = TRUE)
 dob_rast <- lapply(doblist, terra::rast)
 
-crs(dob_rast[[1]])
+# Reproject transects to match raster CRS
+transects_proj <- st_transform(transects, crs(dob_rast[[1]]))
 
+# Extract fire name/ID from filenames to use as a matching key
+fire_names <- tools::file_path_sans_ext(basename(doblist))
+names(dob_rast) <- fire_names
+
+# Extract DOB for each transect point from its matching raster
+# This loops over each unique fire, extracts from the right raster, then recombines
+
+transects <- transects_proj %>%
+  mutate(row_id = row_number()) %>%  # preserve original order
+  split(.$Event_ID) %>%              
+  imap_dfr(function(pts, fire) {
+    
+    # Find the matching raster (partial match in case names aren't exact)
+    rast_match <- dob_rast[[grep(fire, names(dob_rast), value = TRUE)[1]]]
+    
+    if (is.null(rast_match)) {
+      warning(paste("No matching raster for fire:", fire))
+      return(pts %>% mutate(dob = NA))
+    }
+    
+    # Extract values
+    extracted <- terra::extract(rast_match, vect(pts))
+    pts$dob <- extracted[, 2]  # column 1 is ID, column 2 is the raster value
+    return(pts)
+    
+  }) %>%
+  arrange(row_id) %>%   # restore original order
+  select(-row_id)
+
+#Reproject transects back to target crs
+transects <- st_transform(transects, target_crs)
+
+
+transects <- transects %>%
+  mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
 ```
 
 # Topography
@@ -100,7 +139,7 @@ transects <- transects %>%
 
 # Weather & Climate
 
-Most weather variables were obtained from gridMET. FWI (and maybe PDSI?) obtained from X. 
+Weather variables were obtained from gridMET.
 
 ## Load data
 
@@ -111,7 +150,66 @@ Most weather variables were obtained from gridMET. FWI (and maybe PDSI?) obtaine
 ## Transects Join
 
 ```{r}
+final_data <- NULL
 
+# Loop by Year
+for(yr in unique(transects$year)){
+  
+  # 1. Subset points for this year
+  transects_yr <- transects[transects$year == yr, ]
+  
+  # 2. Loop through your variables
+  for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
+    
+    # Map folder name to the prefix
+    prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
+    file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
+    
+    if(!file.exists(file_path)) {
+       warning(paste("File not found:", file_path))
+       transects_yr[[v]] <- NA_real_
+       next
+    }
+    
+    # Load the raster cube
+    r <- rast(file_path)
+    
+    # 3. Extract all layers for the points in this year
+    ext <- terra::extract(r, vect(transects_yr))
+    
+    # 4. "Pluck" the specific day value
+    values_vector <- sapply(1:nrow(transects_yr), function(i) {
+      day_val <- transects_yr$dob[i]
+      
+      # Handle cases where dob is NA
+      if(is.na(day_val)) return(NA_real_)
+      
+      # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
+      day_col <- day_val + 1
+      
+      # Safety check for bounds and missing extraction rows
+      if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
+      
+      return(ext[i, day_col])
+    })
+    
+    # Add this variable to our year-subset
+    transects_yr[[v]] <- values_vector
+  }
+  
+  # 5. Bind results
+  final_data <- bind_rows(final_data, st_as_sf(transects_yr))
+}
+
+transects <- final_data
+```
+
+
+```{r}
+transects <- transects %>%
+  mutate(
+    TMax = TMax - 273.15,      # K to C
+  )
 ```
 
 ## Plots Join
@@ -121,17 +219,16 @@ Most weather variables were obtained from gridMET. FWI (and maybe PDSI?) obtaine
 ```
 
 
-# Vegetation & Pre-Fire Fuels
+# Pre-Fire Fuels
 
 Data is obtained from Landfire. Pre-fire vegetation is represented by the Environmental Site Potential. Pre-fire fuels are represented by Canopy Cover, which I would say is associated with the risk of high-severity crown fire.
 
 ## Load data
 
 ```{r}
-regime <- rast("data/raw/LANDFIRE/LF2016_FRG_200_CONUS/LF2016_FRG_200_CONUS_20250814/LF2016_FRG_200_CONUS/Tif/LC16_FRG_200.tif") %>%
-  crop(CO) %>%
-  mask(CO) %>%
-  project(target_crs)
+CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+  filter(NAME == "Colorado") %>%
+  st_transform("EPSG:5070") #match to crs of landfire for cropping
 
 esp <- rast("data/raw/LANDFIRE/US_140_ESP/Tif/us_140esp.tif") %>%
   crop(CO) %>%
@@ -139,27 +236,19 @@ esp <- rast("data/raw/LANDFIRE/US_140_ESP/Tif/us_140esp.tif") %>%
   project(target_crs)
 activeCat(esp) <- "ESP_NAME"
 
-evt <- rast("data/raw/LANDFIRE/LF2024_EVT_CONUS/Tif/LF2024_EVT_CONUS.tif")%>%
-  crop(CO) %>%
-  mask(CO) %>%
-  project(target_crs)
 ```
 
 ## Transects Join
 
 ```{r}
-regime_trans <- extract(regime, transects)
+# regime_trans <- extract(regime, transects)
 esp_trans <- extract(esp, transects)
-evt_trans <- extract(evt, transects)
+# evt_trans <- extract(evt, transects)
 
 transects <- transects %>%
-  cbind(regime_trans, esp_trans, evt_trans) %>%
+  cbind(esp_trans) %>%
   select(-starts_with("ID")) %>%
-  rename("regime" = "BPS_NAME",
-         "esp" = "ESP_NAME",
-         "evt" = "EVT_NAME")
-
-summary(transects)
+  rename("esp" = "ESP_NAME")
 ```
 
 ## Plots Join
@@ -167,3 +256,94 @@ summary(transects)
 ```{r}
 
 ```
+
+
+# Treatment Characteristics
+
+- Treatment type (Thinning (No Removal), Thinning (With Removal), Broadcast Burning, Previous Wildfire (with prev wildfire severity))
+- Years Since Treatment
+- Number of Treatments
+- Treatment Size
+- Distance to treatment edge
+
+For Plots
+- Treatment Extent
+- Shape Complexity
+
+## Load data
+
+```{r}
+cfri <- st_read("data/raw/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg", layer = "forest_tracker_v1_2024")
+
+
+```
+
+## Transects Join
+
+```{r}
+
+```
+
+## Plots Join
+
+```{r}
+
+```
+
+
+# Response Variable
+
+## Load Data
+
+```{r}
+
+```
+
+## Transects Join
+
+```{r}
+cbilist <- list.files(path = "D:/fuels-analysis/data/processed/GEE/FireSeverity/CBI", pattern = "\\.tif$", full.names = TRUE)
+cbi_rast <- lapply(cbilist, terra::rast)
+
+# Reproject transects to match raster CRS
+transects_proj <- st_transform(transects, crs(cbi_rast[[1]]))
+
+# Extract fire name/ID from filenames to use as a matching key
+fire_names <- tools::file_path_sans_ext(basename(cbilist))
+names(cbi_rast) <- fire_names
+
+# Extract cbi for each transect point from its matching raster
+# This loops over each unique fire, extracts from the right raster, then recombines
+
+transects <- transects_proj %>%
+  mutate(row_id = row_number()) %>%  # preserve original order
+  split(.$Event_ID) %>%              
+  imap_dfr(function(pts, fire) {
+    
+    # Find the matching raster (partial match in case names aren't exact)
+    rast_match <- cbi_rast[[grep(fire, names(cbi_rast), value = TRUE)[1]]]
+    
+    if (is.null(rast_match)) {
+      warning(paste("No matching raster for fire:", fire))
+      return(pts %>% mutate(cbi = NA))
+    }
+    
+    # Extract values
+    extracted <- terra::extract(rast_match, vect(pts))
+    pts$cbi <- extracted[, 2]  # column 1 is ID, column 2 is the raster value
+    return(pts)
+    
+  }) %>%
+  arrange(row_id) %>%   # restore original order
+  select(-row_id)
+
+#Reproject transects back to target crs
+transects <- st_transform(transects, target_crs)
+```
+
+## Plots Join
+
+```{r}
+
+```
+
