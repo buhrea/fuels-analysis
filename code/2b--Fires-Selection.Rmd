@@ -122,4 +122,208 @@ library(terra)
 crs(GEEFires)
 ```
 
+# Make a map of fires across Colorado
+
+```{r}
+library(sf)
+library(tidyverse)
+library(terra)
+library(shadowtext)
+library(tidyterra)
+
+fires_sub <- fires_sub %>%
+  filter(Incid_Name != "ALKALI")
+
+# Create the numbering lookup table
+fire_numbers <- tibble(
+  Incid_Name = c("EIGHT FOUR TWO", "TRAIL SPRINGS", "IRON", "CALWOOD",
+                 "EAST FORK", "BEAVER", "LITTLE MESA", "DOE CANYON",
+                 "PLATEAU", "CAMERON PEAK", "LAKE CHRISTINE",
+                 "WESTON PASS", "DUCKETT", "JUNKINS", "LITTLE SAND"),
+  fire_num = 1:15
+)
+
+# Join numbers to fires_sub
+fires_sub <- fires_sub %>%
+  left_join(fire_numbers, by = "Incid_Name")
+
+fires_sub <- fires_sub %>%
+  mutate(nudge_y_val = ifelse(fire_num == 5, 6500, 0))  
+
+## Cities
+cities <- st_read("data/raw/Cities/Colorado_City_Point_Locations.shp") %>%
+  st_transform(crs = crs(fires_sub)) %>%
+  filter(name %in% c("Denver"))
+## State Boundary 
+state <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+  st_transform(crs = crs(fires_sub)) %>%
+  filter(NAME == "Colorado")
+
+#Roads
+roads <- st_read("data/raw/Highways/Highways%3A_Functional_Class.shp") %>%
+  st_transform(crs=crs(fires_sub)) %>%
+  filter(FUNCCLASS == "1  Interstate")
+
+elev <- rast("data/raw/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif")
+
+# Reproject state to match the raster's CRS first, then crop
+state_elev_crs <- st_transform(state, crs(elev))
+
+elev <- elev %>%
+  crop(vect(state_elev_crs)) %>%        # crop in native CRS first (faster)
+  mask(vect(state_elev_crs)) %>%        # mask in native CRS
+  aggregate(fact = 3, fun = "mean") %>% # reduce resolution before reprojecting
+  project(crs(fires_sub))              # reproject last
+
+# Convert to data frame
+elev_df <- as.data.frame(elev, xy = TRUE) %>%
+  rename(elevation = 3)# Elevation raster
+elev <- rast("data/raw/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif") %>%
+  project(crs(fires_sub)) %>%
+  aggregate(elev, fact = 3, fun = "mean") %>%
+  crop(vect(state)) %>%             
+  mask(vect(state))                 
+
+# Make a map!
+map <- ggplot() +
+  
+  # Elevation basemap
+  geom_raster(
+    data = elev_df,
+    aes(x = x, y = y, fill = elevation)
+  ) +
+  scale_fill_hypso_c(palette = "dem_screen", name = "Elevation (m)") +
+  
+  # Fires 
+  geom_sf(
+    data = fires_sub,
+    fill = "red",
+    color = NA,
+    alpha = 0.7
+  ) +
+  
+   # Fire numbers
+  geom_shadowtext(
+    data = fires_sub,
+    aes(label = fire_num, geometry = geom),
+    nudge_y = fires_sub$nudge_y_val,
+    stat = "sf_coordinates",
+    size = 5,
+    fontface = "bold",
+    color = "black",
+    bg.color = "white"
+  ) +
+  #Roads
+  geom_sf(
+    data = roads,
+    fill = NA,
+    color = "grey",
+    linewidth = 0.5
+  ) +
+  
+  # State outline
+  geom_sf(
+    data = state,
+    fill = NA,
+    color = "black",
+    linewidth = 0.5
+  ) +
+  coord_sf(expand = FALSE) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    plot.caption = element_text(family = "Times New Roman", size = 12),
+    legend.title = element_text(family = "Times New Roman", size = 12),
+    legend.text = element_text(family = "Times New Roman", size = 12),
+    legend.position = c(0.75, 0.5),  # x, y as proportion of plot area (adjust as needed)
+    legend.justification = c(0, 0),
+    legend.background = element_rect(fill = "white", color = NA)
+  ) 
+
+map
+ggsave(
+  filename = "documents/ProposalMap.png",
+  plot = map,          # your ggplot object
+  width = 6,
+  height = 5,
+  units = "in",
+  dpi = 300               # 300 for print, 600 for very high quality
+)
+```
+
+#Try adding table
+
+```{r}
+library(gridExtra)
+library(patchwork)
+
+fire_table <- tibble(
+  `#` = 1:15,
+  `Fire Name` = c("Eight Four Two", "Trail Springs", "Iron", "Calwood", "East Fork",
+                  "Beaver", "Little Mesa", "Doe Canyon", "Plateau", "Cameron Peak",
+                  "Lake Christine", "Weston Pass", "Duckett", "Junkins", "Little Sand"),
+  `Year` = c(2017, 2023, 2023, 2020, 2020, 2010, 2023, 2019, 2018, 2020, 2018, 2018, 2011, 2016, 2012),
+  `Area (ha)` = c(2410, 561, 3150, 3981, 706, 1010, 1638, 2991, 7991, 84541, 5061, 5329, 1904, 7698, 10619),
+  `Prop. Treated` = c(0.84, 0.42, 0.27, 0.26, 0.23, 0.23, 0.20, 0.18, 0.16, 0.14, 0.14, 0.13, 0.11, 0.10, 0.10)
+)
+
+# Split into two halves
+table_left <- fire_table[1:8, ]
+table_right <- fire_table[9:15, ]
+
+# # Convert each to grob
+# grob_left <- tableGrob(table_left, rows = NULL, theme = ttheme_minimal(base_size = 8))
+# grob_right <- tableGrob(table_right, rows = NULL, theme = ttheme_minimal(base_size = 8))
+
+# # Place side by side
+# table_combined <- arrangeGrob(grob_left, grob_right, ncol = 2, widths = c(1, 1))
+
+# Pad right table with a blank row to match left
+table_right_padded <- bind_rows(
+  table_right,
+  tibble(`#` = NA_integer_, `Fire Name` = " ", `Year` = NA_integer_, `Area (ha)` = NA_integer_, `Prop. Treated` = NA_real_)
+) %>%
+  mutate(across(where(is.numeric), ~ as.character(.))) %>%
+  mutate(across(everything(), ~ ifelse(is.na(.), "", .)))
+
+# Also convert left to character for consistency
+table_left_chr <- table_left %>%
+  mutate(across(everything(), as.character))
+
+
+my_theme <- ttheme_minimal(
+  base_size = 12,
+  base_family = "Times New Roman",
+  core = list(fg_params = list(fontfamily = "Times New Roman", fontsize = 12, hjust = 0.5, x = 0.5)),
+  colhead = list(fg_params = list(fontfamily = "Times New Roman", fontsize = 12, fontface = "bold", hjust = 0.5, x = 0.5))
+)
+
+
+grob_left <- tableGrob(table_left_chr, rows = NULL, theme = my_theme)
+grob_right <- tableGrob(table_right_padded, rows = NULL, theme = my_theme)
+
+table_left_chr <- table_left_chr %>%
+  mutate(` ` = "")  # blank spacer column
+
+grob_left <- tableGrob(table_left_chr, rows = NULL, theme = my_theme)
+table_combined <- cbind(grob_left, grob_right)
+
+
+# Combine map and table
+combined <- map / wrap_elements(full = table_combined, clip = FALSE) +
+  plot_layout(heights = c(3, 1)) &
+  theme(plot.margin = margin(1, 1, 1, 1),
+        panel.spacing = unit(0, "pt"))
+
+ggsave(
+  filename = "documents/ProposalMap1.png",
+  plot = combined,
+  width = 8.5,
+  height = 9.5,  # taller to accommodate table
+  units = "in",
+  dpi = 300
+)
+```
 
