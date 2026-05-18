@@ -13,7 +13,7 @@ Topographic - LANDFIRE - Aspect, Elevation, and Slope
 
 Weather & Climate - gridMET - maximum temperature, precipitation, wind velocity, vpd, pdsi, erc
 
-Pre-Fire Fuels - LANDFIRE ESP, NLCD Canopy Cover
+Pre-Treatment Fuels - LANDFIRE ESP, NLCD Canopy Cover
 
 Treatment Characteristics - Forest Tracker
 
@@ -33,13 +33,16 @@ library(terra)
 ```{r}
 target_crs <- "EPSG:26913"
 
+CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+  filter(STUSPS == "CO")
+
 transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") %>%
-  filter(Incid_Name != "ALKALI")
+  filter(Incid_Name != "ALKALI") #removed, too few 4 kriging
 ```
 
 # Day of Burning
 
-We will need to know Day of Burning when we get to our weather variables. Adding that here.
+We will need to know Day of Burning when we get to our weather variables. 
 
 ```{r}
 doblist <- list.files(path = "C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/DOB", pattern = "\\.tif$", full.names = TRUE)
@@ -92,6 +95,8 @@ Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted
 ## Load data
 
 ```{r}
+CO <- CO %>% st_transform("EPSG:5070")
+
 aspect <- rast("data/raw/LANDFIRE/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
@@ -139,7 +144,7 @@ transects <- transects %>%
 
 # Weather & Climate
 
-Weather variables were obtained from gridMET.
+Weather variables were obtained from DayMET.
 
 ## Load data
 

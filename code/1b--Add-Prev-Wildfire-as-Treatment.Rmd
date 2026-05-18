@@ -101,7 +101,7 @@ detailed_results <- intersection %>%
     area_sqm = as.numeric(st_area(.)),
     # Create a refined category: Use RXFIRE_MGT if it's an RX FIRE, otherwise use MGT_TYPE
     detailed_type = case_when(
-      MGT_TYPE == "RX FIRE" ~ RXFIRE_MGT,
+      MGT_TYPE == "Prescribed Fire" ~ ACTIVITY,
       TRUE ~ MGT_TYPE
     )
   ) %>%

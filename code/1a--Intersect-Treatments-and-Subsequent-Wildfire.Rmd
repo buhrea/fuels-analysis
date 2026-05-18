@@ -34,11 +34,7 @@ This file is missing an assigned CRS and includes complex geometry types which a
 
 ```{r}
 #read file 
-treats <- st_read("data/raw/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg")
-
-#Missing crs - found from information tab in qgis (EPSG:26913 - NAD83 / UTM zone 13N)
-st_crs(treats) <- 26913
-treats <- st_transform(treats, target_crs) #reproject
+treats <- st_read("data/raw/CFTv2_FINAL_DATA.gdb")
 
 #Simplify and clean
 treats <- treats %>%
@@ -46,6 +42,9 @@ treats <- treats %>%
   st_cast("MULTIPOLYGON") %>% #convert to simpler geometry 
   filter(MGT_TYPE != "REFOREST") %>%
   st_make_valid(treats)
+
+#Add unique Id
+treats$OBJECTID <- 1:nrow(treats)
 ```
 
 ## Load MTBS Fire Perimeters
@@ -72,7 +71,7 @@ We will find which wildfires intersect with previous treatments, then filter bot
 # Intersect treatments and subsequent wildfires
 intersect <- st_intersection(treats, fires) %>%
   filter(YEAR_COMP < year) %>% #treat year before fire year
-  dplyr::select("Event_ID", "Incid_Name", "year", "OBJECTID", "MGT_TYPE", "RXFIRE_MGT", "CANOPY_MGT", "SURF_MGT", "YEAR_COMP", "ACRES_MGT", "ACRES_GIS", "FOR_TYPE")
+  dplyr::select("Event_ID", "Incid_Name", "year", "OBJECTID", "MGT_TYPE", "ACTIVITY", "YEAR_COMP")
 ```
 
 ## Subset fires to only those that intersect 
@@ -91,7 +90,7 @@ This dataset has more observations than "intersect" because "OBJECTID" is not un
 # Subset treatments to only those that intersect subsequent wildfire 
 treats <- treats %>% 
   filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID))) %>%
-  dplyr::select("OBJECTID", "MGT_TYPE", "RXFIRE_MGT", "CANOPY_MGT", "SURF_MGT", "YEAR_COMP", "ACRES_MGT", "ACRES_GIS", "FOR_TYPE")
+  dplyr::select("OBJECTID", "MGT_TYPE", "ACTIVITY", "YEAR_COMP")
 ```
 
 
