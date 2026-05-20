@@ -30,14 +30,28 @@ library(sf)
 library(terra)
 ```
 
+# Setup
 ```{r}
 target_crs <- "EPSG:26913"
 
 CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
   filter(STUSPS == "CO")
 
+plots100 <- st_read("data/processed/fuels_analysis.gpkg",
+  layer = "plots_100m")
+plots250 <- st_read("data/processed/fuels_analysis.gpkg",
+  layer = "plots_250m")
+plots500 <- st_read("data/processed/fuels_analysis.gpkg",
+  layer = "plots_500m")
+allplots <- rbind(plots100, plots250, plots500)
+
 transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") %>%
   filter(Incid_Name != "ALKALI") #removed, too few 4 kriging
+
+# Change this path to a folder in hard drive
+Sys.setenv(TMPDIR = "D:/temp")
+raster::rasterOptions(tmpdir = "D:/temp") # If using 'raster'
+terra::terraOptions(tempdir = "D:/temp")  # If using 'terra'
 ```
 
 # Day of Burning
@@ -139,7 +153,18 @@ transects <- transects %>%
 ## Plots Join
 
 ```{r}
+north_plots <- extract(northness, allplots, fun = mean)
+east_plots <- extract(eastness, allplots, fun = mean)
+elev_plots <- extract(elevation, allplots, fun = mean)
+slope_plots <- extract(slope, allplots, fun = mean)
 
+allplots <- allplots %>%
+  cbind(north_plots, east_plots, elev_plots, slope_plots) %>%
+  select(-starts_with("ID")) %>%
+  rename("northness" = "LF2020_Asp_CONUS",
+         "eastness" = "LF2020_Asp_CONUS.1",
+         "elevation" = "LC20_Elev_220",
+         "slope" = "LF2020_SlpD_CONUS")
 ```
 
 # Weather & Climate
@@ -149,7 +174,8 @@ Weather variables were obtained from DayMET.
 ## Load data
 
 ```{r}
-
+install.packages("daymetr")
+library("daymetr")
 ```
 
 ## Transects Join
