@@ -85,7 +85,8 @@ sampled_points_list <- lapply(1:nrow(fire_interiors), function(i) {
   # Convert to sf object and keep the original fire's attributes
   st_sf(geometry = pts) %>%
     mutate(Incid_Name = fire_interiors$Incid_Name[i]) %>%
-    mutate(Event_ID = fire_interiors$Event_ID[i])
+    mutate(Event_ID = fire_interiors$Event_ID[i]) %>%
+    mutate(year = fire_interiors$year[i])
 })
 
 # Combine all points into one object

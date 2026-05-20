@@ -43,10 +43,12 @@ plots250 <- st_read("data/processed/fuels_analysis.gpkg",
   layer = "plots_250m")
 plots500 <- st_read("data/processed/fuels_analysis.gpkg",
   layer = "plots_500m")
-allplots <- rbind(plots100, plots250, plots500)
+allplots <- rbind(plots100, plots250, plots500) %>%
+  filter(Incid_Name != "ALKALI")
 
 transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") %>%
   filter(Incid_Name != "ALKALI") #removed, too few 4 kriging
+
 
 # Change this path to a folder in hard drive
 Sys.setenv(TMPDIR = "D:/temp")
@@ -97,8 +99,61 @@ transects <- transects_proj %>%
 #Reproject transects back to target crs
 transects <- st_transform(transects, target_crs)
 
-
 transects <- transects %>%
+  mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
+
+#Plots join
+# 1. Reproject plots to match the raster CRS
+allplots_proj <- st_transform(allplots, crs(dob_rast[[1]]))
+
+# Define a quick custom function to find the most common value (majority)
+get_majority <- function(x, na.rm = TRUE) {
+  if (na.rm) x <- x[!is.na(x)]
+  if (length(x) == 0) return(NA_real_)
+  
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# 2. Extract DOB for each plot polygon from its matching raster
+allplots_processed <- allplots_proj %>%
+  mutate(row_id = row_number()) %>%  # preserve original order
+  split(.$Event_ID) %>%              
+  imap_dfr(function(polys, fire) {
+    
+    # Find the matching raster
+    match_idx <- grep(fire, names(dob_rast))
+    
+    if (length(match_idx) == 0 || is.na(match_idx[1])) {
+      warning(paste("No matching raster for fire:", fire))
+      polys$dob <- NA_real_
+      return(polys)
+    }
+    
+    rast_match <- dob_rast[[match_idx[1]]]
+    
+    # Extract values using our custom majority function
+    extracted <- terra::extract(
+      x = rast_match, 
+      y = vect(polys), 
+      fun = get_majority, # <--- Uses the custom function instead of a string
+      na.rm = TRUE, 
+      ID = FALSE
+    )
+    
+    # Assign extracted values to a new dob column
+    polys$dob <- extracted[[1]] 
+    return(polys)
+    
+  }) %>%
+  arrange(row_id) %>%   # restore original order
+  select(-row_id)
+
+# 3. Reproject plots back to your target CRS
+allplots <- st_transform(allplots_processed, target_crs)
+
+# 4. Calculate calendar date from Julian day
+allplots <- allplots %>%
   mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
 ```
 
@@ -169,13 +224,12 @@ allplots <- allplots %>%
 
 # Weather & Climate
 
-Weather variables were obtained from DayMET.
+Weather variables were obtained from GridMet.
 
 ## Load data
 
 ```{r}
-install.packages("daymetr")
-library("daymetr")
+base_path <- "D:/fuels-analysis/data/raw/GridMet"
 ```
 
 ## Transects Join
@@ -233,22 +287,80 @@ for(yr in unique(transects$year)){
 }
 
 transects <- final_data
-```
 
-
-```{r}
 transects <- transects %>%
   mutate(
     TMax = TMax - 273.15,      # K to C
   )
+
+#Reproject transects back to target crs
+transects <- st_transform(transects, target_crs)
 ```
 
 ## Plots Join
 
 ```{r}
+final_data <- NULL
 
+# Loop by Year
+for(yr in unique(allplots$year)){
+  
+  # 1. Subset points for this year
+  allplots_yr <- allplots[allplots$year == yr, ]
+  
+  # 2. Loop through your variables
+  for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
+    
+    # Map folder name to the prefix
+    prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
+    file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
+    
+    if(!file.exists(file_path)) {
+       warning(paste("File not found:", file_path))
+       allplots_yr[[v]] <- NA_real_
+       next
+    }
+    
+    # Load the raster cube
+    r <- rast(file_path)
+    
+    # 3. Extract all layers for the points in this year
+    ext <- terra::extract(r, vect(allplots_yr), fun = mean)
+    
+    # 4. "Pluck" the specific day value
+    values_vector <- sapply(1:nrow(allplots_yr), function(i) {
+      day_val <- allplots_yr$dob[i]
+      
+      # Handle cases where dob is NA
+      if(is.na(day_val)) return(NA_real_)
+      
+      # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
+      day_col <- day_val + 1
+      
+      # Safety check for bounds and missing extraction rows
+      if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
+      
+      return(ext[i, day_col])
+    })
+    
+    # Add this variable to our year-subset
+    allplots_yr[[v]] <- values_vector
+  }
+  
+  # 5. Bind results
+  final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
+}
+
+allplots <- final_data
+
+allplots <- allplots %>%
+  mutate(
+    TMax = TMax - 273.15,      # K to C
+  )
+
+#Reproject transects back to target crs
+allplots <- st_transform(allplots, target_crs)
 ```
-
 
 # Pre-Fire Fuels
 
@@ -261,25 +373,24 @@ CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
   filter(NAME == "Colorado") %>%
   st_transform("EPSG:5070") #match to crs of landfire for cropping
 
-esp <- rast("data/raw/LANDFIRE/US_140_ESP/Tif/us_140esp.tif") %>%
+evt <- rast("data/raw/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_20250916/US_105_EVT/Tif/us_105evt.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
-activeCat(esp) <- "ESP_NAME"
-
+activeCat(evt) <- "EVT_NAME"
 ```
 
 ## Transects Join
 
 ```{r}
-# regime_trans <- extract(regime, transects)
-esp_trans <- extract(esp, transects)
-# evt_trans <- extract(evt, transects)
+evt_trans <- extract(evt, transects)
 
 transects <- transects %>%
-  cbind(esp_trans) %>%
+  cbind(evt_trans) %>%
   select(-starts_with("ID")) %>%
-  rename("esp" = "ESP_NAME")
+  rename("EVT" = "EVT_NAME")
+
+unique(transects$EVt)
 ```
 
 ## Plots Join
