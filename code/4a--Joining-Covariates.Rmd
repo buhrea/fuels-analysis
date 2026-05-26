@@ -364,9 +364,11 @@ allplots <- st_transform(allplots, target_crs)
 
 # Pre-Fire Fuels
 
-Data is obtained from Landfire. Pre-fire vegetation is represented by the Environmental Site Potential. Pre-fire fuels are represented by Canopy Cover, which I would say is associated with the risk of high-severity crown fire.
+Data is obtained from Landfire. Pre-fire vegetation is represented by the Existing Vegetation Type. Pre-fire fuels are represented by Canopy Cover.
 
-## Load data
+## EVT
+
+### Load data
 
 ```{r}
 CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
@@ -380,7 +382,7 @@ evt <- rast("data/raw/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_20250916/US_1
 activeCat(evt) <- "EVT_NAME"
 ```
 
-## Transects Join
+### Transects Join
 
 ```{r}
 evt_trans <- extract(evt, transects)
@@ -390,10 +392,30 @@ transects <- transects %>%
   select(-starts_with("ID")) %>%
   rename("EVT" = "EVT_NAME")
 
-unique(transects$EVt)
+unique(transects$EVT)
 ```
 
-## Plots Join
+### Plots Join
+
+```{r}
+
+```
+
+## Canopy Cover
+
+### Load data
+
+```{r}
+#Add column to plots with the year we want TCC (year prior to earliest treatment, or year prior to fire for controls)
+```
+
+### Transects Join
+
+```{r}
+
+```
+
+### Plots Join
 
 ```{r}
 
@@ -415,9 +437,14 @@ For Plots
 ## Load data
 
 ```{r}
-cfri <- st_read("data/raw/CO_Forest_Tracker_2024/CO_Forest_Tracker_2024.gpkg", layer = "forest_tracker_v1_2024")
+#path to file (accessed 10/2/25)
+treats_path <- "data/raw/CFTv2_FINAL_DATA.gdb"
 
+#check layer name
+st_layers(treats_path)
 
+#save the layer
+treats <- st_read(treats_path, layer = "CFTv2_FinalData_20260220")
 ```
 
 ## Transects Join
