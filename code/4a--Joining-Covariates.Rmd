@@ -362,6 +362,43 @@ allplots <- allplots %>%
 allplots <- st_transform(allplots, target_crs)
 ```
 
+# Treatment Characteristics
+
+- Treatment type (Thinning (No Removal), Thinning (With Removal), Broadcast Burning, Previous Wildfire (with prev wildfire severity))
+- Years Since Treatment
+- Number of Treatments
+- Treatment Size
+- Distance to treatment edge
+
+For Plots
+- Treatment Extent
+- Shape Complexity
+
+## Load data
+
+```{r}
+#path to file (accessed 10/2/25)
+treats_path <- "data/raw/CFTv2_FINAL_DATA.gdb"
+
+#check layer name
+st_layers(treats_path)
+
+#save the layer
+treats <- st_read(treats_path, layer = "CFTv2_FinalData_20260220")
+```
+
+## Transects Join
+
+```{r}
+
+```
+
+## Plots Join
+
+```{r}
+
+```
+
 # Pre-Fire Fuels
 
 Data is obtained from Landfire. Pre-fire vegetation is represented by the Existing Vegetation Type. Pre-fire fuels are represented by Canopy Cover.
@@ -416,44 +453,6 @@ unique(transects$EVT)
 ```
 
 ### Plots Join
-
-```{r}
-
-```
-
-
-# Treatment Characteristics
-
-- Treatment type (Thinning (No Removal), Thinning (With Removal), Broadcast Burning, Previous Wildfire (with prev wildfire severity))
-- Years Since Treatment
-- Number of Treatments
-- Treatment Size
-- Distance to treatment edge
-
-For Plots
-- Treatment Extent
-- Shape Complexity
-
-## Load data
-
-```{r}
-#path to file (accessed 10/2/25)
-treats_path <- "data/raw/CFTv2_FINAL_DATA.gdb"
-
-#check layer name
-st_layers(treats_path)
-
-#save the layer
-treats <- st_read(treats_path, layer = "CFTv2_FinalData_20260220")
-```
-
-## Transects Join
-
-```{r}
-
-```
-
-## Plots Join
 
 ```{r}
 
