@@ -79,13 +79,8 @@ transects <- transects_proj %>%
   split(.$Event_ID) %>%              
   imap_dfr(function(pts, fire) {
     
-    # Find the matching raster (partial match in case names aren't exact)
+    # Find the matching raster 
     rast_match <- dob_rast[[grep(fire, names(dob_rast), value = TRUE)[1]]]
-    
-    if (is.null(rast_match)) {
-      warning(paste("No matching raster for fire:", fire))
-      return(pts %>% mutate(dob = NA))
-    }
     
     # Extract values
     extracted <- terra::extract(rast_match, vect(pts))
@@ -103,10 +98,10 @@ transects <- transects %>%
   mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
 
 #Plots join
-# 1. Reproject plots to match the raster CRS
+# Reproject plots to match the raster CRS
 allplots_proj <- st_transform(allplots, crs(dob_rast[[1]]))
 
-# Define a quick custom function to find the most common value (majority)
+# Define a custom function to find the most common value (majority)
 get_majority <- function(x, na.rm = TRUE) {
   if (na.rm) x <- x[!is.na(x)]
   if (length(x) == 0) return(NA_real_)
@@ -115,7 +110,7 @@ get_majority <- function(x, na.rm = TRUE) {
   ux[which.max(tabulate(match(x, ux)))]
 }
 
-# 2. Extract DOB for each plot polygon from its matching raster
+# Extract DOB for each plot polygon from its matching raster
 allplots_processed <- allplots_proj %>%
   mutate(row_id = row_number()) %>%  # preserve original order
   split(.$Event_ID) %>%              
@@ -124,19 +119,13 @@ allplots_processed <- allplots_proj %>%
     # Find the matching raster
     match_idx <- grep(fire, names(dob_rast))
     
-    if (length(match_idx) == 0 || is.na(match_idx[1])) {
-      warning(paste("No matching raster for fire:", fire))
-      polys$dob <- NA_real_
-      return(polys)
-    }
-    
     rast_match <- dob_rast[[match_idx[1]]]
     
     # Extract values using our custom majority function
     extracted <- terra::extract(
       x = rast_match, 
       y = vect(polys), 
-      fun = get_majority, # <--- Uses the custom function instead of a string
+      fun = get_majority,
       na.rm = TRUE, 
       ID = FALSE
     )
@@ -149,10 +138,10 @@ allplots_processed <- allplots_proj %>%
   arrange(row_id) %>%   # restore original order
   select(-row_id)
 
-# 3. Reproject plots back to your target CRS
+# Reproject plots back to your target CRS
 allplots <- st_transform(allplots_processed, target_crs)
 
-# 4. Calculate calendar date from Julian day
+# Calculate calendar date from Julian day
 allplots <- allplots %>%
   mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
 ```
@@ -240,10 +229,10 @@ final_data <- NULL
 # Loop by Year
 for(yr in unique(transects$year)){
   
-  # 1. Subset points for this year
+  # Subset points for this year
   transects_yr <- transects[transects$year == yr, ]
   
-  # 2. Loop through your variables
+  # Loop through variables
   for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
     
     # Map folder name to the prefix
@@ -259,10 +248,10 @@ for(yr in unique(transects$year)){
     # Load the raster cube
     r <- rast(file_path)
     
-    # 3. Extract all layers for the points in this year
+    # Extract all layers for the points in this year
     ext <- terra::extract(r, vect(transects_yr))
     
-    # 4. "Pluck" the specific day value
+    # Take the specific day value
     values_vector <- sapply(1:nrow(transects_yr), function(i) {
       day_val <- transects_yr$dob[i]
       
@@ -282,7 +271,7 @@ for(yr in unique(transects$year)){
     transects_yr[[v]] <- values_vector
   }
   
-  # 5. Bind results
+  # Bind results
   final_data <- bind_rows(final_data, st_as_sf(transects_yr))
 }
 
@@ -305,10 +294,10 @@ final_data <- NULL
 # Loop by Year
 for(yr in unique(allplots$year)){
   
-  # 1. Subset points for this year
+  # Subset points for this year
   allplots_yr <- allplots[allplots$year == yr, ]
   
-  # 2. Loop through your variables
+  # Loop through your variables
   for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
     
     # Map folder name to the prefix
@@ -324,10 +313,10 @@ for(yr in unique(allplots$year)){
     # Load the raster cube
     r <- rast(file_path)
     
-    # 3. Extract all layers for the points in this year
+    # Extract all layers for the points in this year
     ext <- terra::extract(r, vect(allplots_yr), fun = mean)
     
-    # 4. "Pluck" the specific day value
+    # Take the specific day value
     values_vector <- sapply(1:nrow(allplots_yr), function(i) {
       day_val <- allplots_yr$dob[i]
       
@@ -380,19 +369,18 @@ treats <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
 
 treats <- treats %>%
   mutate(TRT_TYPE = case_when(
-    # 1. First priority: Explicitly label Wildfires
+    # Label Wildfires
     MGT_TYPE == "Wildfire" ~ "Wildfire",
     
-    # 2. Catch NAs in ACTIVITY where MGT_TYPE is Wildfire 
-    # (Though condition 1 catches most, this ensures absolute safety)
+    # Catch NAs in ACTIVITY where MGT_TYPE is Wildfire 
     is.na(ACTIVITY) & MGT_TYPE == "Wildfire" ~ "Wildfire",
     
-    # 3. Next priority: Catch specific removal activities
+    # Catch specific removal activities
     ACTIVITY %in% c("Removal", "Pile Burn") ~ "Removal",
     
     ACTIVITY %in% "Broadcast Burn" ~ "Broadcast Burn",
     
-    # 4. Fallback: Everything else becomes thinning
+    # Everything else becomes thinning
     TRUE ~ "Thinning"
   ))
 ```
@@ -400,20 +388,20 @@ treats <- treats %>%
 ## Transects Join
 
 ```{r}
-# 1. Ensure the Coordinate Reference Systems (CRS) match perfectly
+# Ensure the crs match
 if (st_crs(transects) != st_crs(treats)) {
   treats <- st_transform(treats, st_crs(transects))
 }
 
-# 2. Add a unique identifier to your transects so we can track individual points
+# Add a unique identifier to your transects to track individual points
 transects <- transects %>% 
   mutate(point_id = row_number())
 
-# 3. Perform the spatial intersection (points x polygons)
+# Perform the spatial intersection (points x polygons)
 # left = TRUE ensures we keep all transect points, even if they have NO treatments
 joined_raw <- st_join(transects, treats, join = st_intersects, left = TRUE)
 
-# 4. Clean up the geometry and process the overlaps
+# Clean up the geometry and process the overlaps
 # We drop geometry temporarily to make the group/summarize operations fast on RAM
 treatment_summary <- joined_raw %>%
   st_drop_geometry() %>%
@@ -428,7 +416,11 @@ treatment_summary <- joined_raw %>%
     
     # Replace 0 with 1 for structural consistency if a point hit exactly one treatment, 
     # or keep 0 if it never intersected any treatment polygons
-    COUNT = ifelse(COUNT == 0, 0, COUNT)
+    COUNT = ifelse(COUNT == 0, 0, COUNT),
+    
+    # Calculate the earliest treatment year
+    # If COUNT is 0, min() returns Inf, so we correct it back to NA
+    EARLY_YEAR = ifelse(COUNT > 0, min(YEAR_COMP, na.rm = TRUE), NA_real_)
   ) %>%
   
   # Arrange by YEAR_COMP (descending) so the latest year is always on top (Row 1)
@@ -440,9 +432,9 @@ treatment_summary <- joined_raw %>%
   ungroup() %>%
   
   # Keep only our point key, the count, and the specific variables you requested
-  select(point_id, COUNT, YEAR_COMP, TRT_TYPE)
+  select(point_id, COUNT, YEAR_COMP, EARLY_YEAR, TRT_TYPE)
 
-# 5. Join the processed attributes back to your original spatial transect object
+# Join the processed attributes back to your original spatial transect object
 transects <- transects %>%
   left_join(treatment_summary, by = "point_id") %>%
   select(-point_id) # Drop the temporary ID tracking column
@@ -451,7 +443,7 @@ transects <- transects %>%
 ## Plots Join
 
 ```{r}
-# 1. Match alignment CRS and calculate initial clean plot areas
+# Match alignment CRS
 if (st_crs(allplots) != st_crs(treats)) {
   treats <- st_transform(treats, st_crs(allplots))
 }
@@ -467,28 +459,32 @@ allplots_base <- allplots %>%
 treats_prep <- treats %>%
   mutate(treatment_id = row_number())
 
-# 2. Compute Total Treated Extent AND Count of Overlaps
+# Compute Total Treated Extent AND Count of Overlaps
 # We use st_intersection with the raw treats layer to find out how many shapes hit each plot area
 plots_joined_raw <- st_intersection(allplots_base %>% select(plot_id, total_plot_area), treats_prep) %>%
   mutate(slice_area = as.numeric(st_area(.))) %>%
   st_drop_geometry()
 
-# A. Calculate total distinct footprints without counting overlaps
+# Calculate total distinct footprints without counting overlaps
 treated_footprint <- st_intersection(allplots_base %>% select(plot_id), st_union(treats)) %>%
   mutate(treated_area_no_overlap = as.numeric(st_area(.))) %>%
   st_drop_geometry() %>%
   select(plot_id, treated_area_no_overlap)
 
-# B. Calculate the actual raw count of treatments that touched each plot boundary
+# Calculate the actual raw count of treatments that touched each plot boundary
 overlap_counts <- plots_joined_raw %>%
   group_by(plot_id) %>%
   summarize(
     # How many unique treatment shapes physically intersected this plot footprint?
     TOTAL_COUNT = n_distinct(treatment_id),
+    # What is the minimum treatment year intersecting this plot footprint?
+    # Since plots_joined_raw only has rows for actual intersections, na.rm isn't strictly needed,
+    # but it keeps things robust.
+    EARLY_YEAR = min(YEAR_COMP, na.rm = TRUE),
     .groups = "drop"
   )
 
-# 3. Compute Categorical Proportions and Weighted Means
+# Compute Categorical Proportions and Weighted Means
 # Process continuous variables (Area-Weighted Means for YEAR_COMP)
 continuous_summary <- plots_joined_raw %>%
   group_by(plot_id) %>%
@@ -511,7 +507,7 @@ categorical_summary <- plots_joined_raw %>%
     names_prefix = "prop_"
   )
 
-# 4. Combine everything back onto the original plot spatial data frame
+# Combine everything back onto the original plot spatial data frame
 allplots_final <- allplots_base %>%
   left_join(treated_footprint, by = "plot_id") %>%
   left_join(overlap_counts, by = "plot_id") %>%
@@ -520,7 +516,9 @@ allplots_final <- allplots_base %>%
   mutate(
     # Convert metrics to structural zeros/defaults if the plot never touched a treatment
     prop_extent_treated = coalesce(treated_area_no_overlap / total_plot_area, 0),
-    TOTAL_COUNT = coalesce(TOTAL_COUNT, 0)
+    TOTAL_COUNT = coalesce(TOTAL_COUNT, 0),
+    # Safety Check: If TOTAL_COUNT is 0, make sure EARLY_YEAR is NA, not Inf
+    EARLY_YEAR = ifelse(TOTAL_COUNT > 0, EARLY_YEAR, NA_real_)
   ) %>%
   # Clean up structural calculation columns and replace missing join values with 0
   select(-plot_id, -total_plot_area, -treated_area_no_overlap) %>%
@@ -547,6 +545,12 @@ evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_202509
   mask(CO) %>%
   project(target_crs)
 activeCat(evt) <- "EVT_NAME"
+
+esp <- rast("D:/Spatial_Data/LANDFIRE/US_140_ESP/Tif/us_140esp.tif") %>%
+  crop(CO) %>%
+  mask(CO) %>%
+  project(target_crs)
+activeCat(esp) <- "ESP_NAME"
 ```
 
 ### Transects Join
@@ -560,6 +564,31 @@ transects <- transects %>%
   rename("EVT" = "EVT_NAME")
 
 unique(transects$EVT)
+
+evt_counts <- transects %>%
+  st_drop_geometry() %>%       # Drops the spatial points matrix to save RAM
+  count(EVT, sort = TRUE)      # Groups by EVT, counts rows, and sorts descending
+
+# View the resulting summary table
+print(evt_counts)
+```
+
+```{r}
+esp_trans <- extract(esp, transects)
+
+transects <- transects %>%
+  cbind(esp_trans) %>%
+  select(-starts_with("ID")) %>%
+  rename("ESP" = "ESP_NAME")
+
+unique(transects$ESP)
+
+esp_counts <- transects %>%
+  st_drop_geometry() %>%       # Drops the spatial points matrix to save RAM
+  count(ESP, sort = TRUE)      # Groups by EVT, counts rows, and sorts descending
+
+# View the resulting summary table
+print(esp_counts)
 ```
 
 ### Plots Join
@@ -570,22 +599,117 @@ unique(transects$EVT)
 
 ## Canopy Cover
 
+Add column to plots with the year we want TCC (year prior to earliest treatment, or year prior to fire for controls)
+
 ### Load data
 
 ```{r}
-#Add column to plots with the year we want TCC (year prior to earliest treatment, or year prior to fire for controls)
+tcc_base_dir <- "D:/Spatial_Data/NLCD"
+
+# Search recursively to find all .tif files within the subfolders
+all_tcc_files <- list.files(
+  path = tcc_base_dir, 
+  pattern = "\\.tif$", 
+  recursive = TRUE, 
+  full.names = TRUE
+)
+
+# Extract the 4-digit year from the filename using a regular expression
+tcc_years <- str_extract(basename(all_tcc_files), "(19|20)\\d{2}(?=0101)")
+
+# Build a clean named vector where the names are the years and values are paths
+tcc_file_map <- all_tcc_files
+names(tcc_file_map) <- tcc_years
+
+# Quick check: print years found
+print(names(tcc_file_map))
 ```
 
 ### Transects Join
 
 ```{r}
+# 1. Calculate the target year per transect row
+transects_prep <- transects %>%
+  mutate(
+    # Handle both your point datasets (use YEAR_COMP if it exists, otherwise default to fire year)
+    base_year = if_all(any_of("EARLY_YEAR"), ~ !is.na(.)) %>% 
+                ifelse(coalesce(EARLY_YEAR, year), year),
+                
+    # If treated, use YEAR_COMP - 1 (or your explicit EARLY_YEAR - 1 variable). Otherwise fire year - 1.
+    target_tcc_year = as.character(base_year - 1),
+    row_id = row_number()
+  )
 
+# Match CRS to the first available TCC raster
+first_tcc_raster <- rast(tcc_file_map[1])
+transects_proj <- st_transform(transects_prep, crs(first_tcc_raster))
+
+# 2. Extract values by looping over each unique target year group
+transects_with_tcc <- transects_proj %>%
+  split(.$target_tcc_year) %>%
+  imap_dfr(function(pts, yr) {
+    
+    # Check if we actually have a raster file for that year
+    if (!yr %in% names(tcc_file_map)) {
+      warning(paste("No NLCD TCC raster available for year:", yr))
+      pts$TCC <- NA_real_
+      return(pts)
+    }
+    
+    # Load annual raster pointer
+    r_tcc <- rast(tcc_file_map[[yr]])
+    
+    # Extract points values
+    extracted <- terra::extract(r_tcc, vect(pts), ID = FALSE)
+    pts$TCC <- extracted[[1]]
+    return(pts)
+  }) %>%
+  arrange(row_id) %>%
+  select(-row_id, -base_year, -target_tcc_year)
+
+# Return to your working target CRS
+transects <- st_transform(transects_with_tcc, target_crs)
 ```
 
 ### Plots Join
 
 ```{r}
+# 1. Calculate target year for plots
+allplots_prep <- allplots %>%
+  mutate(
+    # If TOTAL_COUNT > 0, we assume treated. Use mean_YEAR_COMP or your target year calculation.
+    base_year = if_all(any_of("EARLY_YEAR"), ~ !is.na(.)) %>% 
+                ifelse(coalesce(as.integer(EARLY_YEAR), year), year),
+    target_tcc_year = as.character(base_year - 1),
+    row_id = row_number()
+  )
 
+# Match CRS
+allplots_proj <- st_transform(allplots_prep, crs(first_tcc_raster))
+
+# 2. Extract polygon spatial means grouped by year
+allplots_with_tcc <- allplots_proj %>%
+  split(.$target_tcc_year) %>%
+  imap_dfr(function(polys, yr) {
+    
+    if (!yr %in% names(tcc_file_map)) {
+      warning(paste("No NLCD TCC raster available for year:", yr))
+      polys$TCC <- NA_real_
+      return(polys)
+    }
+    
+    r_tcc <- rast(tcc_file_map[[yr]])
+    
+    # Extract spatial average across each plot polygon boundary
+    extracted <- terra::extract(r_tcc, vect(polys), fun = mean, na.rm = TRUE, ID = FALSE)
+    polys$TCC <- extracted[[1]]
+    return(polys)
+  }) %>%
+  arrange(row_id) %>%
+  select(-row_id, -base_year, -target_tcc_year)
+
+# Return to target CRS
+allplots <- st_transform(allplots_with_tcc, target_crs)
 ```
 
 
@@ -594,15 +718,13 @@ unique(transects$EVT)
 ## Load Data
 
 ```{r}
-
+cbilist <- list.files(path = "data/processed/GEE/FireSeverity/CBI", pattern = "\\.tif$", full.names = TRUE)
+cbi_rast <- lapply(cbilist, terra::rast)
 ```
 
 ## Transects Join
 
 ```{r}
-cbilist <- list.files(path = "D:/fuels-analysis/data/processed/GEE/FireSeverity/CBI", pattern = "\\.tif$", full.names = TRUE)
-cbi_rast <- lapply(cbilist, terra::rast)
-
 # Reproject transects to match raster CRS
 transects_proj <- st_transform(transects, crs(cbi_rast[[1]]))
 
@@ -642,6 +764,100 @@ transects <- st_transform(transects, target_crs)
 ## Plots Join
 
 ```{r}
+# 1. List all CBI files and name the list using the Fire IDs from the filenames
+cbi_dir <- "data/processed/GEE/FireSeverity/CBI"
+cbi_list <- list.files(path = cbi_dir, pattern = "\\.tif$", full.names = TRUE)
+cbi_names <- tools::file_path_sans_ext(basename(cbi_list))
+names(cbi_list) <- cbi_names
 
+# 2. Match coordinate reference systems using the first available raster
+if (length(cbi_list) > 0) {
+  first_raster <- rast(cbi_list[[1]])
+  allplots_proj <- st_transform(allplots, crs(first_raster))
+} else {
+  stop("No .tif files found in the specified CBI directory.")
+}
+
+# 3. Loop through each unique fire, extract pixel values, and calculate thresholds
+allplots_with_cbi <- allplots_proj %>%
+  mutate(row_id = row_number()) %>%  # Track original row order
+  split(.$Event_ID) %>%              # Split into a list of datasets by Fire ID
+  imap_dfr(function(polys, fire) {
+    
+    # Locate the matching raster file for this fire
+    match_idx <- grep(fire, names(cbi_list))
+    
+    if (length(match_idx) == 0 || is.na(match_idx[1])) {
+      warning(paste("No matching CBI raster found for fire ID:", fire))
+      polys$mean_cbi <- NA_real_
+      polys$prop_high_sev <- NA_real_
+      polys$prop_mod_high_sev <- NA_real_
+      return(polys)
+    }
+    
+    # Load the specific pointer for this fire's raster
+    raster_match <- rast(cbi_list[[match_idx[1]]])
+    
+    # Convert polygons to SpatVector for terra
+    v_polys <- vect(polys)
+    
+    # Extract ALL underlying pixels per polygon circle. 
+    # Setting ID = TRUE allows us to keep track of which pixels belong to which plot.
+    extracted_pixels <- terra::extract(raster_match, v_polys, ID = TRUE)
+    
+    # Identify the name of the data column (it matches the raster file name)
+    cbi_col_name <- names(extracted_pixels)[2]
+    
+    # Calculate the summaries for each plot in this fire subset
+    cbi_summary <- extracted_pixels %>%
+      filter(!is.na(.data[[cbi_col_name]])) %>%
+      group_by(ID) %>%
+      summarize(
+        # 1. Continuous Mean
+        mean_cbi = mean(.data[[cbi_col_name]]),
+        
+        # 2. Proportion of High Severity (CBI > 2.25)
+        prop_high_sev = sum(.data[[cbi_col_name]] > 2.25) / n(),
+        
+        # 3. Proportion of Moderate to High Severity (CBI >= 1.26 & CBI <= 3.0)
+        prop_mod_high_sev = sum(.data[[cbi_col_name]] >= 1.26 & .data[[cbi_col_name]] <= 3.0) / n(),
+        .groups = "drop"
+      )
+    
+    # Bind the summarized metrics back onto the spatial plot rows
+    # The 'ID' column generated by terra perfectly matches the row index of v_polys
+    polys_summarized <- polys %>%
+      mutate(ID = row_number()) %>%
+      left_join(cbi_summary, by = "ID") %>%
+      select(-ID)
+    
+    return(polys_summarized)
+    
+  }) %>%
+  arrange(row_id) %>%   # Reorder rows back to the exact input state
+  select(-row_id)
+
+# 4. Project your plots back to your target project CRS
+allplots <- st_transform(allplots_with_cbi, target_crs)
+```
+
+# Save Datasets
+
+```{r}
+st_write(
+  obj = transects,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "transects",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+
+st_write(
+  obj = allplots,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "allplots",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
 ```
 
