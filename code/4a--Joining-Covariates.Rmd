@@ -34,7 +34,7 @@ library(terra)
 ```{r}
 target_crs <- "EPSG:26913"
 
-CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
   filter(STUSPS == "CO")
 
 plots100 <- st_read("data/processed/fuels_analysis.gpkg",
@@ -166,7 +166,7 @@ Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted
 ```{r}
 CO <- CO %>% st_transform("EPSG:5070")
 
-aspect <- rast("data/raw/LANDFIRE/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif") %>%
+aspect <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
@@ -177,12 +177,12 @@ aspect[aspect == -1] <- NA
 northness <- cos(aspect * pi / 180)
 eastness <- sin(aspect * pi / 180)
 
-elevation <- rast("data/raw/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif") %>%
+elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
 
-slope <- rast("data/raw/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %>%
+slope <- rast("D:/Spatial_Data/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
@@ -229,7 +229,7 @@ Weather variables were obtained from GridMet.
 ## Load data
 
 ```{r}
-base_path <- "D:/fuels-analysis/data/raw/GridMet"
+base_path <- "D:/Spatial_Data/GridMet"
 ```
 
 ## Transects Join
@@ -368,35 +368,165 @@ allplots <- st_transform(allplots, target_crs)
 - Years Since Treatment
 - Number of Treatments
 - Treatment Size
-- Distance to treatment edge
 
 For Plots
 - Treatment Extent
-- Shape Complexity
 
 ## Load data
 
 ```{r}
-#path to file (accessed 10/2/25)
-treats_path <- "data/raw/CFTv2_FINAL_DATA.gdb"
-
-#check layer name
-st_layers(treats_path)
-
 #save the layer
-treats <- st_read(treats_path, layer = "CFTv2_FinalData_20260220")
+treats <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
+
+treats <- treats %>%
+  mutate(TRT_TYPE = case_when(
+    # 1. First priority: Explicitly label Wildfires
+    MGT_TYPE == "Wildfire" ~ "Wildfire",
+    
+    # 2. Catch NAs in ACTIVITY where MGT_TYPE is Wildfire 
+    # (Though condition 1 catches most, this ensures absolute safety)
+    is.na(ACTIVITY) & MGT_TYPE == "Wildfire" ~ "Wildfire",
+    
+    # 3. Next priority: Catch specific removal activities
+    ACTIVITY %in% c("Removal", "Pile Burn") ~ "Removal",
+    
+    ACTIVITY %in% "Broadcast Burn" ~ "Broadcast Burn",
+    
+    # 4. Fallback: Everything else becomes thinning
+    TRUE ~ "Thinning"
+  ))
 ```
 
 ## Transects Join
 
 ```{r}
+# 1. Ensure the Coordinate Reference Systems (CRS) match perfectly
+if (st_crs(transects) != st_crs(treats)) {
+  treats <- st_transform(treats, st_crs(transects))
+}
 
+# 2. Add a unique identifier to your transects so we can track individual points
+transects <- transects %>% 
+  mutate(point_id = row_number())
+
+# 3. Perform the spatial intersection (points x polygons)
+# left = TRUE ensures we keep all transect points, even if they have NO treatments
+joined_raw <- st_join(transects, treats, join = st_intersects, left = TRUE)
+
+# 4. Clean up the geometry and process the overlaps
+# We drop geometry temporarily to make the group/summarize operations fast on RAM
+treatment_summary <- joined_raw %>%
+  st_drop_geometry() %>%
+  
+  # Group by our unique point ID
+  group_by(point_id) %>%
+  
+  # Calculate the metrics per point
+  mutate(
+    # Count how many treatments hit this point (ignores NA if no treatment matched)
+    COUNT = sum(!is.na(YEAR_COMP)),
+    
+    # Replace 0 with 1 for structural consistency if a point hit exactly one treatment, 
+    # or keep 0 if it never intersected any treatment polygons
+    COUNT = ifelse(COUNT == 0, 0, COUNT)
+  ) %>%
+  
+  # Arrange by YEAR_COMP (descending) so the latest year is always on top (Row 1)
+  # using NA_real_ sort behavior to keep untreated points accessible
+  arrange(desc(YEAR_COMP), .by_group = TRUE) %>%
+  
+  # Keep only the top row per point (the latest treatment)
+  slice(1) %>%
+  ungroup() %>%
+  
+  # Keep only our point key, the count, and the specific variables you requested
+  select(point_id, COUNT, YEAR_COMP, TRT_TYPE)
+
+# 5. Join the processed attributes back to your original spatial transect object
+transects <- transects %>%
+  left_join(treatment_summary, by = "point_id") %>%
+  select(-point_id) # Drop the temporary ID tracking column
 ```
 
 ## Plots Join
 
 ```{r}
+# 1. Match alignment CRS and calculate initial clean plot areas
+if (st_crs(allplots) != st_crs(treats)) {
+  treats <- st_transform(treats, st_crs(allplots))
+}
 
+# Add structural tracking columns to the plots base
+allplots_base <- allplots %>%
+  mutate(
+    plot_id = row_number(),
+    total_plot_area = as.numeric(st_area(.))
+  )
+
+# Add a row identifier to treatments to act as a proxy tracker for individual polygons
+treats_prep <- treats %>%
+  mutate(treatment_id = row_number())
+
+# 2. Compute Total Treated Extent AND Count of Overlaps
+# We use st_intersection with the raw treats layer to find out how many shapes hit each plot area
+plots_joined_raw <- st_intersection(allplots_base %>% select(plot_id, total_plot_area), treats_prep) %>%
+  mutate(slice_area = as.numeric(st_area(.))) %>%
+  st_drop_geometry()
+
+# A. Calculate total distinct footprints without counting overlaps
+treated_footprint <- st_intersection(allplots_base %>% select(plot_id), st_union(treats)) %>%
+  mutate(treated_area_no_overlap = as.numeric(st_area(.))) %>%
+  st_drop_geometry() %>%
+  select(plot_id, treated_area_no_overlap)
+
+# B. Calculate the actual raw count of treatments that touched each plot boundary
+overlap_counts <- plots_joined_raw %>%
+  group_by(plot_id) %>%
+  summarize(
+    # How many unique treatment shapes physically intersected this plot footprint?
+    TOTAL_COUNT = n_distinct(treatment_id),
+    .groups = "drop"
+  )
+
+# 3. Compute Categorical Proportions and Weighted Means
+# Process continuous variables (Area-Weighted Means for YEAR_COMP)
+continuous_summary <- plots_joined_raw %>%
+  group_by(plot_id) %>%
+  summarize(
+    # Weight the completion year by the size of the slice it covers inside the plot
+    mean_YEAR_COMP = sum(YEAR_COMP * slice_area) / sum(slice_area),
+    .groups = "drop"
+  )
+
+# Process categorical variables (Proportions of Plot Area)
+categorical_summary <- plots_joined_raw %>%
+  group_by(plot_id, TRT_TYPE) %>%
+  summarize(slice_sum = sum(slice_area), total_plot_area = first(total_plot_area), .groups = "drop") %>%
+  mutate(prop = slice_sum / total_plot_area) %>%
+  pivot_wider(
+    id_cols = plot_id,
+    names_from = TRT_TYPE,
+    values_from = prop,
+    values_fill = 0,
+    names_prefix = "prop_"
+  )
+
+# 4. Combine everything back onto the original plot spatial data frame
+allplots_final <- allplots_base %>%
+  left_join(treated_footprint, by = "plot_id") %>%
+  left_join(overlap_counts, by = "plot_id") %>%
+  left_join(continuous_summary, by = "plot_id") %>%
+  left_join(categorical_summary, by = "plot_id") %>%
+  mutate(
+    # Convert metrics to structural zeros/defaults if the plot never touched a treatment
+    prop_extent_treated = coalesce(treated_area_no_overlap / total_plot_area, 0),
+    TOTAL_COUNT = coalesce(TOTAL_COUNT, 0)
+  ) %>%
+  # Clean up structural calculation columns and replace missing join values with 0
+  select(-plot_id, -total_plot_area, -treated_area_no_overlap) %>%
+  mutate(across(starts_with("prop_"), ~coalesce(., 0)))
+
+allplots <- allplots_final
 ```
 
 # Pre-Fire Fuels
@@ -408,11 +538,11 @@ Data is obtained from Landfire. Pre-fire vegetation is represented by the Existi
 ### Load data
 
 ```{r}
-CO <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
   filter(NAME == "Colorado") %>%
   st_transform("EPSG:5070") #match to crs of landfire for cropping
 
-evt <- rast("data/raw/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_20250916/US_105_EVT/Tif/us_105evt.tif") %>%
+evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_20250916/US_105_EVT/Tif/us_105evt.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
