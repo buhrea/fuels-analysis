@@ -32,6 +32,7 @@ library(terra)
 library(lwgeom) #spherical functions for transects
 library(RcppRoll) #rolling operations for transects
 library(slider) #2nd try sliding operations for transects
+library(exactextractr) #get tcc for plots and transects
 ```
 
 ```{r}
@@ -47,6 +48,12 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>%
   st_transform(target_crs)
 ```
 
+```{r}
+#Read in 1999 TCC Cover to only select sites with >10% tree cover prior to any treatment or fire
+
+tcc <- rast("D:/Spatial_Data/NLCD/nlcd_tcc_CONUS_1999_v2023-5_wgs84/nlcd_tcc_conus_wgs84_v2023-5_19990101_19991231.tif")
+```
+
 # Multi-Scale Plot Selection
 ## Point Selection with Perimeter Buffering and Minimum Distance
 ```{r plot-selection}
@@ -54,16 +61,10 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>%
 # st_buffer with a negative value creates an inner buffer
 fire_interiors <- st_buffer(fires, dist = -550)
 
-# 2. Function to sample points with a minimum distance constraint
+# 2. Functions
 sample_with_min_dist <- function(polygon, min_dist = 1000) {
-  # Start with an initial random sample (oversample slightly)
-  # We use "regular" or "random" then filter
-  pts <- st_sample(polygon, size = 500) #adjust size as desired 
-  
+  pts <- st_sample(polygon, size = 500)
   if (length(pts) == 0) return(NULL)
-  
-  # Thin the points to ensure they are 1000m apart
-  # This uses a simple iterative 'greedy' approach
   kept_pts <- pts[1]
   if (length(pts) > 1) {
     for (i in 2:length(pts)) {
@@ -76,51 +77,117 @@ sample_with_min_dist <- function(polygon, min_dist = 1000) {
   return(kept_pts)
 }
 
-# 3. Apply to each fire
-# Using purrr::map or a loop to keep the points associated with fire IDs
-sampled_points_list <- lapply(1:nrow(fire_interiors), function(i) {
-  pts <- sample_with_min_dist(fire_interiors[i, ], min_dist = 1000)
-  if (is.null(pts)) return(NULL)
-  
-  # Convert to sf object and keep the original fire's attributes
-  st_sf(geometry = pts) %>%
-    mutate(Incid_Name = fire_interiors$Incid_Name[i]) %>%
-    mutate(Event_ID = fire_interiors$Event_ID[i]) %>%
-    mutate(year = fire_interiors$year[i])
-})
-
-# Combine all points into one object
-final_points <- do.call(rbind, sampled_points_list)
-
-SumStatsPlots <- final_points %>%
-  group_by(Incid_Name) %>%
-  arrange(Incid_Name) %>%
-  summarize(n = n()) %>%
-  st_drop_geometry()
-SumStatsPlots
-```
-
-## Creating circle plots with varying radii
-
-```{r add-radii}
-# Define the radii you want
 radii <- c(100, 250, 500)
 
-# Create a list of sf objects, one for each radius
-buffer_plots <- lapply(radii, function(r) {
-  st_buffer(final_points, dist = r) %>%
-    mutate(buffer_radius = r)
-})
+# 3. Per-fire iterative selection loop
+final_points_list  <- vector("list", nrow(fire_interiors))
+final_buffers_list <- vector("list", nrow(fire_interiors))
 
-# All plots in one object
-all_buffers <- do.call(rbind, buffer_plots) %>%
+for (i in 1:nrow(fire_interiors)) {
+  
+  fire        <- fire_interiors[i, ]
+  event_id    <- fire$Event_ID
+  incid_name  <- fire$Incid_Name
+  fire_year   <- fire$year
+  
+  # --- Initial candidate sample ---
+  pts_raw <- sample_with_min_dist(fire, min_dist = 1000)
+  if (is.null(pts_raw)) next
+  
+  candidates <- st_sf(geometry = pts_raw) %>%
+    mutate(
+      Incid_Name = incid_name,
+      Event_ID   = event_id,
+      year       = fire_year,
+      point_id   = paste0(substr(incid_name, 1, 4), "_", row_number())
+    )
+  
+  # --- Iterative selection: keep adding points that fit + pass TCC ---
+  kept      <- candidates[0, ]
+  remaining <- candidates
+  
+  repeat {
+    newly_added <- remaining[0, ]
+    
+    for (j in 1:nrow(remaining)) {
+      candidate <- remaining[j, ]
+      
+      # Check minimum distance against already-kept + newly_added this round
+      if (nrow(kept) == 0 && nrow(newly_added) == 0) {
+        distance_ok <- TRUE
+      } else {
+        existing <- rbind(kept, newly_added)
+        dists    <- st_distance(candidate, existing)
+        distance_ok <- all(as.numeric(dists) >= 1000)
+      }
+      
+      if (distance_ok) {
+        # Build buffers and check TCC for all 3 scales
+        bufs <- lapply(radii, function(r) {
+          st_buffer(candidate, dist = r) %>% mutate(buffer_radius = r)
+        }) %>% do.call(rbind, .)
+        
+        bufs_proj        <- st_transform(bufs, crs(tcc))
+        bufs_proj$mean_tcc <- exact_extract(tcc, bufs_proj, "mean")
+        
+        if (all(bufs_proj$mean_tcc >= 10, na.rm = TRUE)) {
+          newly_added <- rbind(newly_added, candidate)
+        }
+      }
+    }
+    
+    if (nrow(newly_added) == 0) break
+    
+    kept      <- rbind(kept, newly_added)
+    remaining <- remaining[!remaining$point_id %in% kept$point_id, ]
+    if (nrow(remaining) == 0) break
+  }
+  
+  if (nrow(kept) == 0) next
+  
+  # --- Build final buffers for kept points ---
+  kept_buffers <- lapply(radii, function(r) {
+    st_buffer(kept, dist = r) %>% mutate(buffer_radius = r)
+  }) %>%
+    do.call(rbind, .) %>%
+    st_transform(crs(tcc)) %>%
+    mutate(mean_tcc = exact_extract(tcc, ., "mean")) %>%
+    st_transform(target_crs)
+  
+  final_points_list[[i]]  <- kept
+  final_buffers_list[[i]] <- kept_buffers
+  
+  message("Fire ", i, " (", incid_name, "): ", nrow(kept), " plots selected")
+}
+
+# --- Combine ---
+final_points <- do.call(rbind, final_points_list)
+all_buffers  <- do.call(rbind, final_buffers_list) %>%
   mutate(unique_id = row_number())
 
-# Separate Objects
-plots_100m <- buffer_plots[[1]]
-plots_250m <- buffer_plots[[2]]
-plots_500m <- buffer_plots[[3]]
+# --- Summary ---
+final_points %>%
+  st_drop_geometry() %>%
+  group_by(Incid_Name) %>%
+  summarise(n = n()) %>%
+  arrange(Incid_Name)
+```
 
+## Save objects
+
+```{r}
+plots_100m <- all_buffers %>% filter(buffer_radius == 100)
+plots_250m <- all_buffers %>% filter(buffer_radius == 250)
+plots_500m <- all_buffers %>% filter(buffer_radius == 500)
+
+
+st_write(
+  obj = all_buffers,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "all_buffers",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
 
 st_write(
   obj = plots_100m,
