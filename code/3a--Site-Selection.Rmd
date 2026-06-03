@@ -172,7 +172,8 @@ final_points %>%
   summarise(n = n()) %>%
   arrange(Incid_Name)
 ```
-
+ Note: the above code dropped Iron because no points met the minimum TCC. We will also need to drop Trail Springs because it only has one plot.
+ 
 ## Save objects
 
 ```{r}
@@ -378,7 +379,19 @@ In ArcGIS I created radial lines from the ignition points to the fire perimeter 
 ```{r}
 #load points
 points <- st_read("data/processed/AllPoints/AllPoints.shp") %>%
-  st_transform(target_crs)
+  st_transform(crs(tcc))
+
+tcc <- as.numeric(tcc)
+
+#Remove points with <10% 1999 TCC
+points$tcc <- terra::extract(tcc, vect(points))[, 2]
+
+# Filter
+points <- points %>%
+  filter(tcc >= 10)
+
+points <- st_transform(points, target_crs)
+
 
 #label treated points
 spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
