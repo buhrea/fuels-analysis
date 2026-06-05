@@ -40,7 +40,7 @@ Load MTBS
 
 ```{r}
 # Using perimeter data for 1984-2024
-allfires <- st_read("data/raw/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+allfires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
   st_transform(target_crs) %>% 
   mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
   filter(Incid_Type=="Wildfire") %>%
@@ -69,6 +69,13 @@ prior_fires <- allfires %>%
   filter(Event_ID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
   rename("OBJECTID" = "Event_ID", "MGT_TYPE" = "Incid_Type", "EVENT_NAME" = "Incid_Name") %>%
   dplyr::select("OBJECTID", "EVENT_NAME","MGT_TYPE", "YEAR_COMP") 
+
+#do it again but for GEE use
+GEE_wildfires <- allfires %>% 
+  filter(Event_ID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
+  dplyr::select(Event_ID, Ig_Date, YEAR_COMP) 
+
+st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires.shp")
 ```
 
 

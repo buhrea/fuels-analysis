@@ -34,13 +34,13 @@ This file is missing an assigned CRS and includes complex geometry types which a
 
 ```{r}
 #read file 
-treats <- st_read("data/raw/CFTv2_FINAL_DATA.gdb")
+treats <- st_read("D:/Spatial_Data/CFTv2_FINAL_DATA.gdb")
 
 #Simplify and clean
 treats <- treats %>%
   st_zm(drop=TRUE, what = "ZM") %>% #drop third and forth dimension
   st_cast("MULTIPOLYGON") %>% #convert to simpler geometry 
-  filter(MGT_TYPE != "REFOREST") %>%
+  filter(MGT_TYPE != "Reforestation") %>%
   st_make_valid(treats)
 
 #Add unique Id
@@ -53,7 +53,7 @@ I am filtering for fires from 2015 on (trying 2010 11/18/25). Perimeter data was
 
 ```{r}
 # Using perimeter data for 1984-2024
-fires <- st_read("data/raw/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
+fires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
   st_transform(target_crs) %>% 
   mutate(Ig_Date = as.Date(Ig_Date), year=year(Ig_Date)) %>%   # convert to date
   filter(year>=2010) %>%  # filter for fires that occurred in or after 2015

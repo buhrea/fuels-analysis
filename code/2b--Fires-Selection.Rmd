@@ -117,9 +117,15 @@ st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # import sele
   st_write("data/processed/GEE/fires_GEE.shp", delete_dsn = TRUE)
 
 
-GEEFires <- st_read("data/processed/GEE/fires_GEE.shp")
-library(terra)
-crs(GEEFires)
+#Do it for treatment fires too
+## Prepares the selected fires perimeter dataset for use in Sean Parks' GEE code for calculating fire severity
+st_read("data/processed/GEE/treatment_wildfires.shp") %>% # import selected perimeters
+  mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
+  mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
+  mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
+  mutate(Fire_Year= as.character(YEAR_COMP), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
+  dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
+  st_write("data/processed/GEE/fires_GEE_Treatments.shp", delete_dsn = TRUE)
 ```
 
 # Make a map of fires across Colorado

@@ -37,17 +37,13 @@ target_crs <- "EPSG:26913"
 CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
   filter(STUSPS == "CO")
 
-plots100 <- st_read("data/processed/fuels_analysis.gpkg",
-  layer = "plots_100m")
-plots250 <- st_read("data/processed/fuels_analysis.gpkg",
-  layer = "plots_250m")
-plots500 <- st_read("data/processed/fuels_analysis.gpkg",
-  layer = "plots_500m")
-allplots <- rbind(plots100, plots250, plots500) %>%
-  filter(Incid_Name != "ALKALI")
+allplots <- st_read("data/processed/fuels_analysis.gpkg",
+  layer = "all_buffers_selected") %>%
+  filter(Incid_Name != c("ALKALI", "IRON", "TRAIL SPRINGS"))
 
-transects <- st_read("data/processed/Transects/FinalTransectsALL.shp") %>%
-  filter(Incid_Name != "ALKALI") #removed, too few 4 kriging
+transects <- st_read("data/processed/fuels_analysis.gpkg",
+  layer = "transects_selected") %>%
+  filter(Incid_Name != c("ALKALI", "IRON", "TRAIL SPRINGS")) #removed, too few 4 kriging, not forested, and too few plots
 
 
 # Change this path to a folder in hard drive
@@ -166,7 +162,7 @@ aspect[aspect == -1] <- NA
 northness <- cos(aspect * pi / 180)
 eastness <- sin(aspect * pi / 180)
 
-elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif") %>%
+elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
@@ -190,7 +186,7 @@ transects <- transects %>%
   select(-starts_with("ID")) %>%
   rename("northness" = "LF2020_Asp_CONUS",
          "eastness" = "LF2020_Asp_CONUS.1",
-         "elevation" = "LC20_Elev_220",
+         "elevation" = "LF2020_Elev_CONUS",
          "slope" = "LF2020_SlpD_CONUS")
 ```
 
@@ -207,7 +203,7 @@ allplots <- allplots %>%
   select(-starts_with("ID")) %>%
   rename("northness" = "LF2020_Asp_CONUS",
          "eastness" = "LF2020_Asp_CONUS.1",
-         "elevation" = "LC20_Elev_220",
+         "elevation" = "LF2020_Elev_CONUS",
          "slope" = "LF2020_SlpD_CONUS")
 ```
 
@@ -545,12 +541,6 @@ evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_202509
   mask(CO) %>%
   project(target_crs)
 activeCat(evt) <- "EVT_NAME"
-
-esp <- rast("D:/Spatial_Data/LANDFIRE/US_140_ESP/Tif/us_140esp.tif") %>%
-  crop(CO) %>%
-  mask(CO) %>%
-  project(target_crs)
-activeCat(esp) <- "ESP_NAME"
 ```
 
 ### Transects Join
@@ -571,24 +561,6 @@ evt_counts <- transects %>%
 
 # View the resulting summary table
 print(evt_counts)
-```
-
-```{r}
-esp_trans <- extract(esp, transects)
-
-transects <- transects %>%
-  cbind(esp_trans) %>%
-  select(-starts_with("ID")) %>%
-  rename("ESP" = "ESP_NAME")
-
-unique(transects$ESP)
-
-esp_counts <- transects %>%
-  st_drop_geometry() %>%       # Drops the spatial points matrix to save RAM
-  count(ESP, sort = TRUE)      # Groups by EVT, counts rows, and sorts descending
-
-# View the resulting summary table
-print(esp_counts)
 ```
 
 ### Plots Join
@@ -847,7 +819,7 @@ allplots <- st_transform(allplots_with_cbi, target_crs)
 st_write(
   obj = transects,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "transects",
+  layer = "transectsDS",
   driver = "GPKG",
   delete_layer= TRUE
 )
@@ -855,7 +827,7 @@ st_write(
 st_write(
   obj = allplots,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "allplots",
+  layer = "allplotsDS",
   driver = "GPKG",
   delete_layer= TRUE
 )
