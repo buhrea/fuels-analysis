@@ -279,93 +279,93 @@ InForm (NIFC) was downloaded here: https://data-nifc.opendata.arcgis.com/dataset
 Two fires (Junkins and Lake Christine) have ignition points outside of the fire perimeters. The Junkins point of origin was thus gathered from this report: https://wildfiretoday.com/tag/junkins-fire/. The Lake Christine point of origin was approximated as the southern most point (while the southern most point may be slightly west of the actual origin, due to a change in wind direction it should be more accurate for approximating fire spread).
 
 ```{r occurrence-prep}
-occurrence <- st_read("D:/Spatial_Data/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
-  st_transform(target_crs) %>%
-  mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
-  filter(year(FireDiscoveryDateTime) >= 2010,
-         year(FireDiscoveryDateTime) <= 2024) %>%
-  mutate(occurrence_year = year(FireDiscoveryDateTime)) %>%
-  mutate(IncidentName = toupper(IncidentName))%>%
-  dplyr::select(occurrence_year, IncidentName)
-
-##Adjust points which are outside of perimeter########################
-#Add in Junkins point of origin by selecting western most point
-junkcoords <- fires %>%
-  filter(Incid_Name == "JUNKINS") %>%
-  st_coordinates()
-junkx <- min(junkcoords[ ,1]) #Minimum X coordinate = western most, which we can see is the origin from the report
-junkorig <- junkcoords[junkcoords[, 1] == junkx, ]
-junkorig <- st_sfc(
-  st_point(c(junkorig[1], junkorig[2])),
-  crs = st_crs(fires)
-)
-junkorigfin <- st_sf(
-  occurrence_year = 2016,
-  IncidentName   = "JUNKINS",
-  SHAPE           = junkorig
-)
-#Add Lake Christine by selecting southern most point
-lchristcoords <- fires %>%
-  filter(Incid_Name == "LAKE CHRISTINE") %>%
-  st_coordinates()
-lchristy <- min(lchristcoords[ ,2]) #Minimum Y coordinate = southernmost
-lchristorig <- lchristcoords[lchristcoords[, 2] == lchristy, ]
-lchristorig <- st_sfc( #make spatial object from list
-  st_point(c(lchristorig[1], lchristorig[2])),
-  crs = st_crs(fires)
-)
-lchristorigfin <- st_sf(
-  occurrence_year = 2018,
-  IncidentName   = "LAKE CHRISTINE",
-  SHAPE           = lchristorig
-)
-#Add our new origin points back to our occurrence dataset
-occurrence <- rbind(occurrence, junkorigfin, lchristorigfin)
-####################################################################
-
-
-occurrence_in_fires <- st_join(
-  occurrence,
-  fires,
-  join = st_intersects,
-  left = FALSE
-) %>%
-  filter(occurrence_year == year,
-         IncidentName == Incid_Name) %>%
-  dplyr::select(c("Event_ID", "Incid_Name", "Ig_Date", "year", "Area_SqM"))
-
-st_write(
-  obj = occurrence_in_fires,
-  dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "ignition points",
-  driver = "GPKG",
-  delete_layer= TRUE
-)
-
-#We need a csv as well for the ArcGIS methods
-# Extract the Projected Coordinates (X and Y)
-# This creates new columns for X and Y based on your SHAPE field
-coords <- st_coordinates(occurrence_in_fires)
-occurrence_in_fires$X_Coord <- coords[,1]
-occurrence_in_fires$Y_Coord <- coords[,2]
-
-# Drop the spatial geometry temporarily to work with it as a table
-occurrence_in_fires_df <- st_drop_geometry(occurrence_in_fires)
-
-# Calculate a distance for each fire so that the radial lines cover the fire
-occurrence_in_fires_df <- occurrence_in_fires_df %>%
-  mutate(LineDist = sqrt(Area_SqM) * 3)
-
-# Create a data frame of angles
-angles <- data.frame(Bearing = 1:360)
-
-# The "Cross Join": This multiplies your fires by the 360 angles
-# Every fire will now have 360 rows, one for each degree.
-radial_table <- occurrence_in_fires_df %>%
-  crossing(angles)
-
-# Save as a CSV to bring back into ArcGIS Pro
-write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FALSE)
+# occurrence <- st_read("D:/Spatial_Data/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
+#   st_transform(target_crs) %>%
+#   mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
+#   filter(year(FireDiscoveryDateTime) >= 2010,
+#          year(FireDiscoveryDateTime) <= 2024) %>%
+#   mutate(occurrence_year = year(FireDiscoveryDateTime)) %>%
+#   mutate(IncidentName = toupper(IncidentName))%>%
+#   dplyr::select(occurrence_year, IncidentName)
+# 
+# ##Adjust points which are outside of perimeter########################
+# #Add in Junkins point of origin by selecting western most point
+# junkcoords <- fires %>%
+#   filter(Incid_Name == "JUNKINS") %>%
+#   st_coordinates()
+# junkx <- min(junkcoords[ ,1]) #Minimum X coordinate = western most, which we can see is the origin from the report
+# junkorig <- junkcoords[junkcoords[, 1] == junkx, ]
+# junkorig <- st_sfc(
+#   st_point(c(junkorig[1], junkorig[2])),
+#   crs = st_crs(fires)
+# )
+# junkorigfin <- st_sf(
+#   occurrence_year = 2016,
+#   IncidentName   = "JUNKINS",
+#   SHAPE           = junkorig
+# )
+# #Add Lake Christine by selecting southern most point
+# lchristcoords <- fires %>%
+#   filter(Incid_Name == "LAKE CHRISTINE") %>%
+#   st_coordinates()
+# lchristy <- min(lchristcoords[ ,2]) #Minimum Y coordinate = southernmost
+# lchristorig <- lchristcoords[lchristcoords[, 2] == lchristy, ]
+# lchristorig <- st_sfc( #make spatial object from list
+#   st_point(c(lchristorig[1], lchristorig[2])),
+#   crs = st_crs(fires)
+# )
+# lchristorigfin <- st_sf(
+#   occurrence_year = 2018,
+#   IncidentName   = "LAKE CHRISTINE",
+#   SHAPE           = lchristorig
+# )
+# #Add our new origin points back to our occurrence dataset
+# occurrence <- rbind(occurrence, junkorigfin, lchristorigfin)
+# ####################################################################
+# 
+# 
+# occurrence_in_fires <- st_join(
+#   occurrence,
+#   fires,
+#   join = st_intersects,
+#   left = FALSE
+# ) %>%
+#   filter(occurrence_year == year,
+#          IncidentName == Incid_Name) %>%
+#   dplyr::select(c("Event_ID", "Incid_Name", "Ig_Date", "year", "Area_SqM"))
+# 
+# st_write(
+#   obj = occurrence_in_fires,
+#   dsn = "data/processed/fuels_analysis.gpkg",
+#   layer = "ignition points",
+#   driver = "GPKG",
+#   delete_layer= TRUE
+# )
+# 
+# #We need a csv as well for the ArcGIS methods
+# # Extract the Projected Coordinates (X and Y)
+# # This creates new columns for X and Y based on your SHAPE field
+# coords <- st_coordinates(occurrence_in_fires)
+# occurrence_in_fires$X_Coord <- coords[,1]
+# occurrence_in_fires$Y_Coord <- coords[,2]
+# 
+# # Drop the spatial geometry temporarily to work with it as a table
+# occurrence_in_fires_df <- st_drop_geometry(occurrence_in_fires)
+# 
+# # Calculate a distance for each fire so that the radial lines cover the fire
+# occurrence_in_fires_df <- occurrence_in_fires_df %>%
+#   mutate(LineDist = sqrt(Area_SqM) * 3)
+# 
+# # Create a data frame of angles
+# angles <- data.frame(Bearing = 1:360)
+# 
+# # The "Cross Join": This multiplies your fires by the 360 angles
+# # Every fire will now have 360 rows, one for each degree.
+# radial_table <- occurrence_in_fires_df %>%
+#   crossing(angles)
+# 
+# # Save as a CSV to bring back into ArcGIS Pro
+# write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FALSE)
 ```
 
 In ArcGIS I created radial lines from the ignition points to the fire perimeter using the "Bearing Distance to Line" tools. This generated 360 geodetic lines to the fire perimeter. The input for generating the lines was a csv made above. Preserve the attributes so that the Event_ID is retained.I then generated points along the lines, and did a spatial join with the fires layer using an attribute filter with Event_ID. This gives me points within the fire perimeter spaced every 50m (planar) from the ignition point. Export the results of the spatial join as AllPoints. You will have to take out the TargetFID and Date fields for export.

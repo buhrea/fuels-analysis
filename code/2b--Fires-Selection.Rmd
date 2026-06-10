@@ -157,20 +157,20 @@ fires_sub <- fires_sub %>%
   mutate(nudge_y_val = ifelse(fire_num == 5, 6500, 0))  
 
 ## Cities
-cities <- st_read("data/raw/Cities/Colorado_City_Point_Locations.shp") %>%
+cities <- st_read("D:/Spatial_Data/Cities/Colorado_City_Point_Locations.shp") %>%
   st_transform(crs = crs(fires_sub)) %>%
   filter(name %in% c("Denver"))
 ## State Boundary 
-state <- st_read("data/raw/States/cb_2018_us_state_20m.shp") %>%
+state <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
   st_transform(crs = crs(fires_sub)) %>%
   filter(NAME == "Colorado")
 
 #Roads
-roads <- st_read("data/raw/Highways/Highways%3A_Functional_Class.shp") %>%
+roads <- st_read("D:/Spatial_Data/Highways/Highways%3A_Functional_Class.shp") %>%
   st_transform(crs=crs(fires_sub)) %>%
   filter(FUNCCLASS == "1  Interstate")
 
-elev <- rast("data/raw/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif")
+elev <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif")
 
 # Reproject state to match the raster's CRS first, then crop
 state_elev_crs <- st_transform(state, crs(elev))
@@ -184,7 +184,7 @@ elev <- elev %>%
 # Convert to data frame
 elev_df <- as.data.frame(elev, xy = TRUE) %>%
   rename(elevation = 3)# Elevation raster
-elev <- rast("data/raw/LANDFIRE/LF2020_Elev_220_CONUS/Tif/LC20_Elev_220.tif") %>%
+elev <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/Lf2020_Elev_CONUS.tif") %>%
   project(crs(fires_sub)) %>%
   aggregate(elev, fact = 3, fun = "mean") %>%
   crop(vect(state)) %>%             

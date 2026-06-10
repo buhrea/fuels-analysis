@@ -75,7 +75,7 @@ GEE_wildfires <- allfires %>%
   filter(Event_ID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
   dplyr::select(Event_ID, Ig_Date, YEAR_COMP) 
 
-st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires.shp")
+st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires.shp", append = FALSE)
 ```
 
 
