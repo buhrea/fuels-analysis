@@ -13,18 +13,78 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r cars}
 library(tidyverse)
+library(hrbrthemes) #point density charts
+library(viridis)
 
-transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS")
+transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
+transects$TCC <- as.numeric(transects$TCC)
+transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
 
 plots <- st_read("data/processed/fuels_analysis.gpkg", layer = "allplotsDS")
 ```
 
-## Histograms of Transect Characteristics
+## Summary Table of Treatment Type and Mean CBI for Transects and Plots
 
-You can also embed plots, for example:
+```{r}
 
-```{r pressure, echo=FALSE}
-plot(pressure)
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+## Point Density of Transect Characteristics by Treatment Type
+
+```{r}
+#Topography
+p1 <- ggplot(data=transects, aes(x=northness, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p1
+
+p2 <- ggplot(data=transects, aes(x=eastness, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p2
+
+p3 <-  ggplot(data=transects, aes(x=elevation, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p3
+
+p4 <-  ggplot(data=transects, aes(x=slope, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p4
+
+#Weather and Climate
+p5 <- ggplot(data=transects, aes(x=TMax, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p5
+
+p6 <- ggplot(data=transects, aes(x=PR, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p6
+
+p7 <- ggplot(data=transects, aes(x=VS, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p7
+
+#Fuels
+p8 <- ggplot(data=transects, aes(x=TCC, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p8
+
+#Response
+p12 <- ggplot(data=transects, aes(x=cbi, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p12
+```
+
+## Point Density of Plot Characteristics by Treatment Type
+
+```{r}
+
+```
+
