@@ -451,6 +451,7 @@ transect_pts <- pts %>%
     (max(ORIG_SEQ) - min(ORIG_SEQ)) == 9,     # span must be 9
     n_distinct(ORIG_SEQ) == 10                # no missing sequence numbers
   ) %>%
+  mutate(Point_ID = row_number()) %>%
   ungroup()
 ```
 
@@ -459,12 +460,12 @@ transect_pts <- pts %>%
 ```{r}
 transect_pts <- transect_pts %>%
   group_by(Event_ID, Incid_Name, ORIG_FID, origin_row, type) %>%
-  mutate(TransectID = cur_group_id()) %>%
+  mutate(Transect_ID = cur_group_id()) %>%
   ungroup()
 
 transect_lines <- transect_pts %>%
-  arrange(Event_ID, Incid_Name, ORIG_FID, TransectID, ORIG_SEQ) %>%  
-  group_by(TransectID, Event_ID, Incid_Name, ORIG_FID) %>%
+  arrange(Event_ID, Incid_Name, ORIG_FID, Transect_ID, ORIG_SEQ) %>%  
+  group_by(Transect_ID, Event_ID, Incid_Name, ORIG_FID) %>%
   summarize(geometry = st_cast(st_combine(geometry), "LINESTRING"),
             type = first(type),
             .groups = "drop") 
@@ -557,8 +558,8 @@ SumStatsTransects
 ```{r}
 transects_final <- transect_pts %>%
   semi_join(balanced_transects %>% st_drop_geometry(), 
-            by = c("Event_ID", "ORIG_FID", "TransectID")) %>%
-  dplyr::select(Event_ID, Incid_Name, year, TransectID, type)
+            by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
+  dplyr::select(Event_ID, Incid_Name, year, Transect_ID, type)
 
 st_write(transects_final, 
          "data/processed/Transects/FinalTransectsALL.shp",
