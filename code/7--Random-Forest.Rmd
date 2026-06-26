@@ -15,12 +15,14 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(sf)
 library(car)
+library(corrplot)
 library(randomForest)
 
 plots <- st_read("data/processed/fuels_analysis.gpkg", layer = "allplotsDS") 
-plots$TCC <- as.numeric(plots$TCC)
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
+plots <- plots %>%
+  mutate(across(c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC"), as.numeric))
 ```
 
 # Calculate VIF scores
@@ -33,6 +35,12 @@ model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR
 vif_scores <- vif(model)
 print(vif_scores)
 
+
+#Correlation matrix
+plots_corr <- plots %>% st_drop_geometry()
+cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC")], use = "complete.obs")
+
+corrplot(cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC")], use = "complete.obs"), method = "color", addCoef.col = "black")
 ```
 
 # Random Forest - Prop high severity
@@ -46,7 +54,7 @@ test_data  <- plots[-index, ]
 
 # 2. Fit the model 
 rf_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + VPD + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
+  prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -83,7 +91,7 @@ test_data  <- plots[-index, ]
 
 # 2. Fit the model 
 rf_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + VPD + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
+  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
