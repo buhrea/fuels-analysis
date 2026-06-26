@@ -416,8 +416,10 @@ treatment_summary <- joined_raw %>%
     
     # Calculate the earliest treatment year
     # If COUNT is 0, min() returns Inf, so we correct it back to NA
-    EARLY_YEAR = ifelse(COUNT > 0, min(YEAR_COMP, na.rm = TRUE), NA_real_)
-  ) %>%
+    EARLY_YEAR = ifelse(COUNT > 0, min(YEAR_COMP, na.rm = TRUE), NA_real_),
+    
+    AGE = ifelse(COUNT > 0, (year - YEAR_COMP), NA_real_)
+      ) %>%
   
   # Arrange by YEAR_COMP (descending) so the latest year is always on top (Row 1)
   # using NA_real_ sort behavior to keep untreated points accessible
@@ -428,7 +430,7 @@ treatment_summary <- joined_raw %>%
   ungroup() %>%
   
   # Keep only our point key, the count, and the specific variables you requested
-  select(point_id, COUNT, YEAR_COMP, EARLY_YEAR, TRT_TYPE)
+  select(point_id, COUNT, YEAR_COMP, EARLY_YEAR, AGE, TRT_TYPE)
 
 # Join the processed attributes back to your original spatial transect object
 transects <- transects %>%

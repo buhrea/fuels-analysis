@@ -559,7 +559,7 @@ SumStatsTransects
 transects_final <- transect_pts %>%
   semi_join(balanced_transects %>% st_drop_geometry(), 
             by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-  dplyr::select(Event_ID, Incid_Name, year, Transect_ID, type)
+  dplyr::select(Event_ID, Incid_Name, year, Transect_ID, Point_ID, type)
 
 st_write(transects_final, 
          "data/processed/Transects/FinalTransectsALL.shp",
