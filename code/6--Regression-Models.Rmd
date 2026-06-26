@@ -1,0 +1,100 @@
+---
+title: "6--Regression-Models"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Setup
+
+```{r}
+library(tidyverse)
+library(sf)
+library(lme4)
+
+transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
+transects$TCC <- as.numeric(transects$TCC)
+transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
+```
+
+## Response Variable Distribution
+
+```{r}
+hist(transects$cbi)
+```
+
+## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics (type, age, number, and prev. burn severity), and an interaction between point distance and transect type
+
+- prev burn sev
+
+```{r}
+tmod <- lmer(cbi ~ TRT_TYPE + COUNT + AGE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects)
+
+summary(tmod)
+```
+
+## Evaluating model assumptions
+
+Fitted vs residuals plot
+```{r}
+# Residual diagnostic plots for tmod
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(tmod), main = "Q-Q Plot of Residuals")
+qqline(resid(tmod), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(tmod), resid(tmod),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+## Try glmmTMB with beta regression
+```{r}
+library(glmmTMB)
+
+# Rescale CBI from [0, 3] to (0, 1)
+# Beta regression requires strictly open interval, so we squeeze away from 0 and 1
+transects$cbi_scaled <- (transects$cbi / 3 * (nrow(transects) - 1) + 0.5) / nrow(transects)
+
+tmod_beta <- glmmTMB(
+  cbi_scaled ~ TRT_TYPE + COUNT + AGE + Point_ID * type + (1 | Event_ID/Transect_ID),
+  data = transects,
+  family = beta_family(link = "logit")
+)
+
+summary(tmod_beta)
+```
+
+# Check model Assumptions
+```{r}
+library(DHARMa)
+sim_res <- simulateResiduals(tmod_beta)
+plot(sim_res)
+```
+
+## Try zero inflated hurdle model
+
+```{r}
+tmod_zibeta <- glmmTMB(
+  cbi_scaled ~ TRT_TYPE + COUNT + AGE + Point_ID * type + (1 | Event_ID/Transect_ID),
+  data = transects,
+  family = beta_family(link = "logit")
+)
+
+summary(tmod_zibeta)
+
+# Recheck diagnostics
+sim_res2 <- simulateResiduals(tmod_zibeta)
+plot(sim_res2)
+```
+
