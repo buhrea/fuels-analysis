@@ -26,7 +26,42 @@ plots <- st_read("data/processed/fuels_analysis.gpkg", layer = "allplotsDS")
 ## Summary Table of Treatment Type and Mean CBI for Transects and Plots
 
 ```{r}
+# Summary for transects
+transect_summary <- transects %>%
+  st_drop_geometry() %>%
+  group_by(TRT_TYPE) %>%
+  summarise(
+    n = n(),
+    mean_cbi = round(mean(cbi, na.rm = TRUE), 3),
+    sd_cbi = round(sd(cbi, na.rm = TRUE), 3),
+    min_cbi = round(min(cbi, na.rm = TRUE), 3),
+    max_cbi = round(max(cbi, na.rm = TRUE), 3)
+  ) %>%
+  mutate(source = "Transects")
 
+# Summary for plots
+plot_summary <- plots %>%
+  st_drop_geometry() %>%
+  group_by(prop_extent_treated) %>%
+  summarise(
+    n = n(),
+    mean_cbi = round(mean(mean_cbi, na.rm = TRUE), 3),
+    sd_cbi = round(sd(mean_cbi, na.rm = TRUE), 3),
+    min_cbi = round(min(mean_cbi, na.rm = TRUE), 3),
+    max_cbi = round(max(mean_cbi, na.rm = TRUE), 3)
+  ) %>%
+  mutate(source = "Plots")
+
+# Combined table
+bind_rows(transect_summary, plot_summary) %>%
+  select(source, TRT_TYPE, n, mean_cbi, sd_cbi, min_cbi, max_cbi) %>%
+  arrange(source, TRT_TYPE) %>%
+  knitr::kable(
+    col.names = c("Source", "Treatment Type", "N", "Mean CBI", "SD CBI", "Min CBI", "Max CBI"),
+    caption = "Summary of Treatment Type and CBI by Data Source"
+  )
+
+hist(plots$prop_extent_treated)
 ```
 
 ## Point Density of Transect Characteristics by Treatment Type
@@ -85,6 +120,19 @@ p12
 ## Point Density of Plot Characteristics by Treatment Type
 
 ```{r}
+## Point Density of Plot Characteristics by Treatment Type
+vars_to_plot <- c("northness", "eastness", "elevation", "slope", "TMax", "PR", 
+                  "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", 
+                  "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", 
+                  "prop_extent_treated", "TCC", "mean_cbi")
 
+plot_list <- map(vars_to_plot, ~{
+  ggplot(data = plots, aes(x = .data[[.x]])) +
+    geom_density(adjust = 1.5, alpha = .4) +
+    labs(x = .x) +
+    theme_minimal()
+})
+
+walk(plot_list, print)
 ```
 
