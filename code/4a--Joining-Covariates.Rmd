@@ -492,8 +492,24 @@ continuous_summary <- plots_joined_raw %>%
     .groups = "drop"
   )
 
+
 # Process categorical variables (Proportions of Plot Area)
-categorical_summary <- plots_joined_raw %>%
+# Dissolve treatment polygons by type first, so overlapping polygons
+# of the same TRT_TYPE don't get double-counted
+treats_by_type <- treats_prep %>%
+  group_by(TRT_TYPE) %>%
+  summarize(.groups = "drop")
+
+# Intersect plots with the dissolved-by-type layer
+plots_by_type <- st_intersection(
+  allplots_base %>% select(plot_id, total_plot_area),
+  treats_by_type
+) %>%
+  mutate(slice_area = as.numeric(st_area(.))) %>%
+  st_drop_geometry()
+
+# Now proportions per type are safe to sum directly (no overlap within a type)
+categorical_summary <- plots_by_type %>%
   group_by(plot_id, TRT_TYPE) %>%
   summarize(slice_sum = sum(slice_area), total_plot_area = first(total_plot_area), .groups = "drop") %>%
   mutate(prop = slice_sum / total_plot_area) %>%
