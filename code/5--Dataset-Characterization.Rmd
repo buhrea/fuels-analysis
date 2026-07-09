@@ -2,7 +2,9 @@
 title: "5--Data-Characterization"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r setup, include=FALSE}
@@ -15,53 +17,57 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(hrbrthemes) #point density charts
 library(viridis)
+library(sf)
+library(here)
 
-transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
 transects$TCC <- as.numeric(transects$TCC)
 transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
 
-plots <- st_read("data/processed/fuels_analysis.gpkg", layer = "allplotsDS")
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS")
 ```
 
 ## Summary Table of Treatment Type and Mean CBI for Transects and Plots
 
 ```{r}
-# Summary for transects
-transect_summary <- transects %>%
-  st_drop_geometry() %>%
-  group_by(TRT_TYPE) %>%
-  summarise(
-    n = n(),
-    mean_cbi = round(mean(cbi, na.rm = TRUE), 3),
-    sd_cbi = round(sd(cbi, na.rm = TRUE), 3),
-    min_cbi = round(min(cbi, na.rm = TRUE), 3),
-    max_cbi = round(max(cbi, na.rm = TRUE), 3)
-  ) %>%
-  mutate(source = "Transects")
-
-# Summary for plots
-plot_summary <- plots %>%
-  st_drop_geometry() %>%
-  group_by(prop_extent_treated) %>%
-  summarise(
-    n = n(),
-    mean_cbi = round(mean(mean_cbi, na.rm = TRUE), 3),
-    sd_cbi = round(sd(mean_cbi, na.rm = TRUE), 3),
-    min_cbi = round(min(mean_cbi, na.rm = TRUE), 3),
-    max_cbi = round(max(mean_cbi, na.rm = TRUE), 3)
-  ) %>%
-  mutate(source = "Plots")
-
-# Combined table
-bind_rows(transect_summary, plot_summary) %>%
-  select(source, TRT_TYPE, n, mean_cbi, sd_cbi, min_cbi, max_cbi) %>%
-  arrange(source, TRT_TYPE) %>%
-  knitr::kable(
-    col.names = c("Source", "Treatment Type", "N", "Mean CBI", "SD CBI", "Min CBI", "Max CBI"),
-    caption = "Summary of Treatment Type and CBI by Data Source"
-  )
-
+# # Summary for transects
+# transect_summary <- transects %>%
+#   st_drop_geometry() %>%
+#   group_by(TRT_TYPE) %>%
+#   summarise(
+#     n = n(),
+#     mean_cbi = round(mean(cbi, na.rm = TRUE), 3),
+#     sd_cbi = round(sd(cbi, na.rm = TRUE), 3),
+#     min_cbi = round(min(cbi, na.rm = TRUE), 3),
+#     max_cbi = round(max(cbi, na.rm = TRUE), 3)
+#   ) %>%
+#   mutate(source = "Transects")
+# 
+# # Summary for plots
+# plot_summary <- plots %>%
+#   st_drop_geometry() %>%
+#   group_by(prop_extent_treated) %>%
+#   summarise(
+#     n = n(),
+#     mean_cbi = round(mean(mean_cbi, na.rm = TRUE), 3),
+#     sd_cbi = round(sd(mean_cbi, na.rm = TRUE), 3),
+#     min_cbi = round(min(mean_cbi, na.rm = TRUE), 3),
+#     max_cbi = round(max(mean_cbi, na.rm = TRUE), 3)
+#   ) %>%
+#   mutate(source = "Plots")
+# 
+# # Combined table
+# bind_rows(transect_summary, plot_summary) %>%
+#   select(source, TRT_TYPE, n, mean_cbi, sd_cbi, min_cbi, max_cbi) %>%
+#   arrange(source, TRT_TYPE) %>%
+#   knitr::kable(
+#     col.names = c("Source", "Treatment Type", "N", "Mean CBI", "SD CBI", "Min CBI", "Max CBI"),
+#     caption = "Summary of Treatment Type and CBI by Data Source"
+#   )
+# 
 hist(plots$prop_extent_treated)
+hist(transects$cbi)
+range(transects$cbi)
 ```
 
 ## Point Density of Transect Characteristics by Treatment Type

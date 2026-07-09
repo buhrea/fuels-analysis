@@ -28,10 +28,8 @@ plots <- plots %>%
 # Calculate VIF scores
 
 ```{r}
-# 2. Build your multiple linear regression model
 model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + VPD + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC, data = plots)
 
-# 3. Calculate the VIF scores
 vif_scores <- vif(model)
 print(vif_scores)
 
@@ -46,14 +44,14 @@ corrplot(cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax
 # Random Forest - Prop high severity
 
 ```{r}
-# 1. Prepare and split data (80% Train, 20% Test)
+# Prepare and split data (80% Train, 20% Test)
 set.seed(123) # Ensures identical bootstrap results
 index <- sample(1:nrow(plots), 0.8 * nrow(plots))
 train_data <- plots[index, ]
 test_data  <- plots[-index, ]
 
-# 2. Fit the model 
-rf_model <- randomForest(
+# Fit the model 
+high_model <- randomForest(
   prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
@@ -61,13 +59,13 @@ rf_model <- randomForest(
   importance = TRUE     # Evaluates feature impact
 )
 
-# 3. Print out-of-bag (OOB) error summary
-print(rf_model)
+# Print out-of-bag (OOB) error summary
+print(high_model)
 
-# 4. Generate predictions on test data
-predictions <- predict(rf_model, newdata = test_data)
+# Generate predictions on test data
+predictions <- predict(high_model, newdata = test_data)
 
-# 5. Evaluate classification accuracy
+# Evaluate classification accuracy
 table(Observed = test_data$prop_high_sev, Predicted = predictions)
 
 ```
@@ -75,22 +73,22 @@ table(Observed = test_data$prop_high_sev, Predicted = predictions)
 # Plots - high severity
 
 ```{r}
-plot(rf_model)
-importance(rf_model)
-varImpPlot(rf_model)
+plot(high_model)
+importance(high_model)
+varImpPlot(high_model)
 ```
 
 # Random Forest - Prop mod-high severity
 
 ```{r}
-# 1. Prepare and split data (80% Train, 20% Test)
+# Prepare and split data (80% Train, 20% Test)
 set.seed(123) # Ensures identical bootstrap results
 index <- sample(1:nrow(plots), 0.8 * nrow(plots))
 train_data <- plots[index, ]
 test_data  <- plots[-index, ]
 
-# 2. Fit the model 
-rf_model <- randomForest(
+# Fit the model 
+mohi_model <- randomForest(
   prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
@@ -98,13 +96,13 @@ rf_model <- randomForest(
   importance = TRUE     # Evaluates feature impact
 )
 
-# 3. Print out-of-bag (OOB) error summary
-print(rf_model)
+# Print out-of-bag (OOB) error summary
+print(mohi_model)
 
-# 4. Generate predictions on test data
-predictions <- predict(rf_model, newdata = test_data)
+# Generate predictions on test data
+predictions <- predict(mohi_model, newdata = test_data)
 
-# 5. Evaluate classification accuracy
+# Evaluate classification accuracy
 table(Observed = test_data$prop_mod_high_sev, Predicted = predictions)
 
 ```
@@ -112,7 +110,7 @@ table(Observed = test_data$prop_mod_high_sev, Predicted = predictions)
 # Plots - mod-high severity
 
 ```{r}
-plot(rf_model)
-importance(rf_model)
-varImpPlot(rf_model)
+plot(mohi_model)
+importance(mohi_model)
+varImpPlot(mohi_model)
 ```

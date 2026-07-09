@@ -17,12 +17,18 @@ library(sf)
 library(lme4)
 library(glmmTMB)
 library(DHARMa)
+library(ggeffects)
 
 transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
 transects$TCC <- as.numeric(transects$TCC)
 transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
-transects$AGE[is.na(transects$AGE)] <- 30
-transects$type <- factor(transects$type, levels = c("entering", "exiting"))
+transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Thinning", "Removal", "Broadcast Burn", "Wildfire"))
+transects$type <- factor(transects$type, levels = c("control", "entering", "exiting"))
+
+#Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
+transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
+transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
+transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
 ```
 
 ## Response Variable Distribution
@@ -31,12 +37,44 @@ transects$type <- factor(transects$type, levels = c("entering", "exiting"))
 hist(transects$cbi)
 ```
 
+## Look at shape of relationship between each predictor and cbi
+
+```{r}
+transects_test <- filter(transects, Incid_Name != "CAMERON PEAK")
+ggplot(transects, aes(x = TRT_TYPE, y = cbi)) +
+  geom_boxplot()
+ggplot(transects_test, aes(x = TRT_TYPE, y = cbi)) +
+  geom_boxplot()
+
+ggplot(transects, aes(x = COUNT, y = cbi)) +
+  geom_point()
+ggplot(transects_test, aes(x = COUNT, y = cbi)) +
+  geom_point()
+
+ggplot(transects, aes(x = AGE, y = cbi)) +
+  geom_point()
+ggplot(transects_test, aes(x = AGE, y = cbi)) +
+  geom_point()
+
+
+ggplot(transects, aes(x = Point_ID, y = cbi, color = type, group = type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", se = TRUE) +
+  theme_minimal() +
+  labs(x = "Point ID", y = "CBI", color = "Type")
+ggplot(transects_test, aes(x = Point_ID, y = cbi, color = type, group = type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "loess", se = TRUE) +
+  theme_minimal() +
+  labs(x = "Point ID", y = "CBI", color = "Type")
+```
+
 ## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics (type, age, number, and prev. burn severity), and an interaction between point distance and transect type
 
 - prev burn sev
 
 ```{r}
-m1 <- lmer(cbi ~ TRT_TYPE + COUNT + AGE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+m1 <- lmer(cbi ~ TRT_TYPE + COUNT + AGE:TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
 
 summary(m1)
 vif(m1)
@@ -63,353 +101,61 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-## Try glmmTMB 
+# Beta Regression
+
+Trying a beta regression because the diamond shape in residuals is likely because we are treating bounded data as continuous (cite).
 
 ```{r}
-# Step 1: Create a mean-proxy variable for the dispersion formula
-# glmmTMB's dispformula needs a column in the data, not a function call.
-# We use fitted values from your lmer model as a proxy for the expected mean —
-# the idea being that where the mean is high, we expect more variance too.
-# This is the same logic as weighted least squares but modeled explicitly.
-tmod$fitted_vals <- fitted(m1)
+transects$cbi_scaled <- transects$cbi/3
 
-# Step 2: Fit the model
-# The mean structure (fixed + random effects) is identical to your lmer model.
-# Only the variance structure changes.
-m2 <- glmmTMB(
-  cbi ~ TRT_TYPE + COUNT + AGE + Point_ID * type +
-    (1 | Event_ID/Transect_ID),
-  
-  # dispformula models log(sigma) as a function of fitted_vals.
-  # This tells the model: "don't assume constant residual variance —
-  # let it increase (or decrease) as a function of the predicted mean."
-  # Without this, glmmTMB assumes homoscedasticity just like lmer.
-  # The ~ fitted_vals says variance is allowed to scale linearly with
-  # the mean on the log scale, which matches the fan shape you saw.
-  dispformula = ~ fitted_vals,
-  
-  # gaussian() with identity link is the closest equivalent to lmer.
-  # We're not changing the distribution assumption yet, just the variance structure.
-  family = gaussian(link = "identity"),
-  
-  data = tmod,
-  REML = TRUE
-)
+#Adjust to get rid of exact 0s and 1s
+n <- nrow(transects)
+transects$cbi_squeezed <- (transects$cbi_scaled * (n - 1) + 0.5) / n
 
-summary(m2)
+m2 <- glmmTMB(cbi_squeezed ~ TRT_TYPE + COUNT + AGE + Point_ID*type + (1|Event_ID/Transect_ID), family = beta_family(), data = transects)
 
-# Step 3: Diagnostics with DHARMa
-# DHARMa simulates from the fitted model and compares to observed data,
-# which works for glmmTMB in a way that base R plot(model) does not.
-# The QQ plot here tests uniformity of randomized quantile residuals —
-# a better diagnostic for mixed models than raw residuals.
-sim_m2 <- simulateResiduals(m2, n = 1000)
-plot(sim_m2)
-
-# Also test specifically for heteroscedasticity —
-# this is the formal version of the fan plot you were reading visually
-testDispersion(sim_m2)
-testQuantiles(sim_m2)
+sim_beta <- simulateResiduals(m2)
+plot(sim_beta)
 ```
 
-# Try GlmmTMB with beta distribution
 
 ```{r}
-# Rescale CBI from [0,3] to (0,1) — beta requires open interval
-# Smithson & Verkuilen (2006) transformation compresses away true 0s and 1s
-tmod$cbi_beta <- (tmod$cbi / 3 * (nrow(tmod) - 1) + 0.5) / nrow(tmod)
+# Check residual patterns against key predictors directly
+plotResiduals(sim_beta, form = transects$TRT_TYPE)
+plotResiduals(sim_beta, form = transects$type)
+plotResiduals(sim_beta, form = transects$COUNT)
+plotResiduals(sim_beta, form = transects$AGE)
+```
 
-m3 <- glmmTMB(
-  cbi_beta ~ TRT_TYPE + COUNT + AGE + Point_ID * type +
-    (1 | Event_ID/Transect_ID),
-  
-  # Beta family with logit link — appropriate for a proportion/bounded response.
-  # Logit link means fixed effects are on the log-odds scale, so exponentiated
-  # coefficients are odds ratios of the rescaled CBI, not raw CBI differences.
-  # This is the cost of getting the distribution right.
-  family = beta_family(link = "logit"),
-  
-  # No dispformula needed to start — beta already has a built-in precision
-  # parameter (phi) that handles heteroscedasticity more naturally than Gaussian.
-  # If DHARMa still shows quantile deviations you can add dispformula = ~fitted_vals
-  # as a second step.
-  
-  data = tmod,
-  REML = TRUE
-)
+# Add Age interaction
+
+```{r}
+m3 <- glmmTMB(cbi_squeezed ~ TRT_TYPE + COUNT + AGE:treated + Point_ID*type + (1|Event_ID/Transect_ID), family = beta_family(), data = transects)
 
 summary(m3)
 
-# Diagnostics
-sim_m3 <- simulateResiduals(m3, n = 1000)
-plot(sim_m3)
-testDispersion(sim_m3)
-testQuantiles(sim_m3)
+sim3 <- simulateResiduals(m3)
+plot(sim3)
+
+# Re-check the AGE-specific residual pattern that flagged the problem originally
+plotResiduals(sim3, form = transects$AGE)
 ```
 
-# Try zero inflated hurdle model
+# Add a dispersion formula 
+
+Addresses uneven variance between treatment type groups
 
 ```{r}
-# First check how many zeros you actually have — worth knowing
-sum(tmod$cbi == 0)
-mean(tmod$cbi == 0)
-
-# Keep exact zeros as-is (handled by ziformula hurdle),
-# but compress values of exactly 1 away from the boundary.
-# The +0.5/n Smithson-Verkuilen adjustment applied only to the upper end:
-n <- nrow(tmod)
-tmod$cbi_prop <- ifelse(
-  tmod$cbi_prop == 1,
-  (1 * (n - 1) + 0.5) / n,  # compress exact 1s slightly inward
-  tmod$cbi / 3               # everything else including zeros stays as-is
-)
-
-# Verify range — should be [0, <1)
-range(tmod$cbi_prop)
-sum(tmod$cbi_prop == 0)  # should still match your 277
-
-# For hurdle beta, zeros need to stay as exact zeros.
-# The Smithson-Verkuilen transform we used before squished them away,
-# which is wrong here — we need the model to see the zeros explicitly.
-# So we go back to the 0-1 rescaled CBI without the compression:
-
 m4 <- glmmTMB(
-  cbi_prop ~ TRT_TYPE + COUNT + AGE + Point_ID * type +
+  cbi_squeezed ~ TRT_TYPE + COUNT + AGE:treated + Point_ID*type + 
     (1 | Event_ID/Transect_ID),
-  
-  # ziformula models the zero-inflation (hurdle) process separately.
-  # ~1 fits a single intercept for the probability of being zero —
-  # meaning the zero probability is constant across all observations.
-  # You can make this more complex later (e.g., ~TRT_TYPE) if zeros
-  # are more common in some treatment types than others, which ecologically
-  # makes sense — untreated or wildfire stands might have more unburned plots.
-  ziformula = ~ TRT_TYPE,
-  
-  # beta_family handles the (0,1) continuous part for CBI > 0.
-  # glmmTMB's zero-inflated beta automatically splits the likelihood:
-  # P(y=0) is modeled by ziformula, P(y>0) * Beta(y) by the mean formula.
-  family = beta_family(link = "logit"),
-  
-  data = tmod,
-  REML = TRUE
+  family = beta_family(),
+  dispformula = ~ TRT_TYPE,
+  data = transects
 )
 
 summary(m4)
-
-sim_m4 <- simulateResiduals(m4, n = 1000)
-plot(sim_m4)
-testDispersion(sim_m4)
-testQuantiles(sim_m4)
-
-# Also specifically test for zero inflation — this will tell you
-# whether the hurdle component is actually necessary or was overkill
-testZeroInflation(sim_m4)
-```
-
-# Try zero inflated model with dispersion formula
-
-```{r}
-m5 <- glmmTMB(
-  cbi_prop ~ TRT_TYPE + COUNT + AGE + Point_ID * type +
-    (1 | Event_ID/Transect_ID),
-  
-  ziformula = ~ TRT_TYPE,
-  
-  # dispformula models the precision parameter phi as a function of
-  # treatment type. The idea: burn severity variance likely differs
-  # between treatment types — wildfire may produce more bimodal CBI
-  # (either very low or very high) while prescribed burn stands may
-  # cluster more tightly. Letting phi vary by TRT_TYPE gives the
-  # beta distribution a different shape in each group.
-  dispformula = ~ TRT_TYPE,
-  
-  family = beta_family(link = "logit"),
-  data = tmod,
-  REML = TRUE
-)
-
-summary(m5)
-sim_m5 <- simulateResiduals(m5, n = 1000)
-plot(sim_m5)
-testDispersion(sim_m5)
-testZeroInflation(sim_m5)
-
-# Compare m4 vs m5 — is the added dispersion complexity justified?
-AIC(m4, m5)
-```
-
-```{r}
-# Are there zeros driving down Broadcast Burn's mean?
-tmod %>%
-  group_by(TRT_TYPE) %>%
-  summarise(
-    prop_zero = mean(cbi == 0),
-    mean_cbi_nonzero = mean(cbi[cbi > 0]),
-    n_zero = sum(cbi == 0)
-  )
-
-# Where are Untreated transects relative to fire perimeter?
-# Are they entering, exiting, or control type?
-tmod %>%
-  count(TRT_TYPE, type) %>%
-  pivot_wider(names_from = type, values_from = n, values_fill = 0)
-
-# Check Removal — are high CBI values concentrated in certain fires?
-tmod %>%
-  filter(TRT_TYPE == "Removal") %>%
-  group_by(Incid_Name) %>%
-  summarise(mean_cbi = mean(cbi), n = n()) %>%
-  arrange(desc(mean_cbi))
-
-
-# 1. Check whether control points are inflating Untreated mean CBI
-tmod %>%
-  filter(TRT_TYPE == "Untreated") %>%
-  group_by(type) %>%
-  summarise(
-    n = n(),
-    mean_cbi = mean(cbi),
-    prop_zero = mean(cbi == 0)
-  )
-
-# 2. Check Cameron Peak's influence — how does Removal look without it?
-tmod %>%
-  filter(TRT_TYPE == "Removal") %>%
-  summarise(
-    mean_cbi_all = mean(cbi),
-    mean_cbi_no_cameron = mean(cbi[Incid_Name != "CAMERON PEAK"]),
-    n_no_cameron = sum(Incid_Name != "CAMERON PEAK")
-  )
-```
-
-```{r}
-# Fit m5 without Cameron Peak Removal points and compare coefficients
-tmod_noCP <- tmod %>%
-  filter(!(Incid_Name == "CAMERON PEAK" & TRT_TYPE == "Removal"))
-
-m5_noCP <- glmmTMB(
-  cbi_prop ~ TRT_TYPE + COUNT + AGE + Point_ID * type +
-    (1 | Event_ID/Transect_ID),
-  ziformula = ~ TRT_TYPE,
-  dispformula = ~ TRT_TYPE,
-  family = beta_family(link = "logit"),
-  data = tmod_noCP,
-  REML = TRUE
-)
-
-# Compare Removal coefficient between full and sensitivity model
-bind_rows(
-  fixef(m5)$cond %>% 
-    as.data.frame() %>% 
-    rownames_to_column("term") %>%
-    mutate(model = "full"),
-  fixef(m5_noCP)$cond %>% 
-    as.data.frame() %>% 
-    rownames_to_column("term") %>%
-    mutate(model = "no_cameron_removal")
-) %>%
-  filter(str_detect(term, "Removal|Intercept")) %>%
-  pivot_wider(names_from = model, values_from = ".") %>%
-  mutate(difference = full - no_cameron_removal)
-
-tmod %>%
-  count(Incid_Name, TRT_TYPE) %>%
-  pivot_wider(names_from = TRT_TYPE, values_from = n, values_fill = 0)
-
-# Quantify how many fires each treatment actually appears in
-tmod %>%
-  count(Incid_Name, TRT_TYPE) %>%
-  filter(n > 0) %>%
-  count(TRT_TYPE, name = "n_fires") %>%
-  arrange(n_fires)
-
-# See the imbalance clearly
-tmod %>%
-  count(Incid_Name) %>%
-  mutate(prop = n / sum(n))
-```
-
-# Try without control type transects
-
-```{r}
-tmod_nocontrols <- tmod %>%
-  filter(type != "control")
-
-# Check resulting sample sizes
-tmod_nocontrols %>%
-  count(Incid_Name, TRT_TYPE) %>%
-  pivot_wider(names_from = TRT_TYPE, values_from = n, values_fill = 0)
-
-tmod_nocontrols %>%
-  count(TRT_TYPE) %>%
-  mutate(prop = n / sum(n))
-
-tmod_nocontrols <- tmod %>%
-  filter(type != "control") %>%
-  mutate(TRT_TYPE = factor(TRT_TYPE, 
-                           levels = c("Untreated", "Broadcast Burn", 
-                                      "Thinning", "Removal", "Wildfire")))
-
-m5 <- glmmTMB(
-  cbi_prop ~ TRT_TYPE + COUNT + AGE + Point_ID * type +
-    (1 | Event_ID/Transect_ID),
-  
-  ziformula = ~ TRT_TYPE,
-  
-  # dispformula models the precision parameter phi as a function of
-  # treatment type. The idea: burn severity variance likely differs
-  # between treatment types — wildfire may produce more bimodal CBI
-  # (either very low or very high) while prescribed burn stands may
-  # cluster more tightly. Letting phi vary by TRT_TYPE gives the
-  # beta distribution a different shape in each group.
-  dispformula = ~ TRT_TYPE,
-  
-  family = beta_family(link = "logit"),
-  data = tmod_nocontrols,
-  REML = TRUE
-)
-
-summary(m5)
-sim_m5 <- simulateResiduals(m5, n = 1000)
-plot(sim_m5)
-testDispersion(sim_m5)
-testZeroInflation(sim_m5)
-```
-
-# Visualizing entering/exiting effect
-
-```{r}
-library(ggeffects)
-
-# Generate predictions across Point_ID for each combination of TRT_TYPE and type
-# ggpredict handles the back-transformation from logit scale to the response scale
-# and propagates uncertainty into confidence intervals automatically
-preds <- ggpredict(m5, terms = c("Point_ID [1:10]", "type", "TRT_TYPE"), bias_correction = TRUE)
-
-# Convert back to CBI scale (0-3) for interpretability, since cbi_prop was CBI/3
-preds_df <- as.data.frame(preds) %>%
-  rename(Point_ID = x, type = group, TRT_TYPE = facet) %>%
-  mutate(
-    cbi_pred = predicted * 3,
-    cbi_low = conf.low * 3,
-    cbi_high = conf.high * 3
-  )
-
-ggplot(preds_df, aes(x = Point_ID, y = cbi_pred, color = TRT_TYPE, fill = TRT_TYPE)) +
-  geom_ribbon(aes(ymin = cbi_low, ymax = cbi_high), alpha = 0.15, color = NA) +
-  geom_line(linewidth = 1) +
-  facet_wrap(~type, labeller = labeller(type = c(entering = "Entering Treatment", 
-                                                   exiting = "Exiting Treatment"))) +
-  scale_color_viridis_d() +
-  scale_fill_viridis_d() +
-  labs(
-    x = "Point ID (distance along transect)",
-    y = "Predicted CBI",
-    color = "Treatment Type",
-    fill = "Treatment Type",
-    title = "Predicted CBI Across Treatment Boundary Transects"
-  ) +
-  theme_minimal() +
-  theme(legend.position = "bottom")
+sim4 <- simulateResiduals(m4)
+plot(sim4)
 ```
 
