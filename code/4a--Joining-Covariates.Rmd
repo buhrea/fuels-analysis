@@ -28,6 +28,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(sf)
 library(terra)
+library(exactextractr)
 ```
 
 # Setup
@@ -558,7 +559,7 @@ evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_202509
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
-activeCat(evt) <- "EVT_NAME"
+activeCat(evt) <- "SYSTMGRPNA"
 ```
 
 ### Transects Join
@@ -569,7 +570,7 @@ evt_trans <- extract(evt, transects)
 transects <- transects %>%
   cbind(evt_trans) %>%
   select(-starts_with("ID")) %>%
-  rename("EVT" = "EVT_NAME")
+  rename("EVT" = "SYSTMGRPNA")
 
 unique(transects$EVT)
 
@@ -579,12 +580,118 @@ evt_counts <- transects %>%
 
 # View the resulting summary table
 print(evt_counts)
+
+# Reclassification lookup: raw SystmGrpName -> simplified EVT_Group
+evt_lookup <- tibble::tribble(
+  ~EVT,                                                              ~EVT_Group,
+  "Ponderosa Pine Forest, Woodland and Savanna",                     "ponderosa",
+  "Lodgepole Pine Forest and Woodland",                              "lodgepole",
+  "Spruce-Fir Forest and Woodland",                                  "spruce-fir",
+  "Douglas-fir-Ponderosa Pine-Lodgepole Pine Forest and Woodland",   "mixed conifer",
+  "Aspen-Mixed Conifer Forest and Woodland",                         "mixed conifer",
+  "Aspen Forest, Woodland, and Parkland",                            "aspen",
+  "Douglas-fir-Grand Fir-White Fir Forest and Woodland",             "mixed conifer",
+  "Pinyon-Juniper Woodland",                                         "pinyon-juniper",
+  "Western Riparian Woodland and Shrubland",                         "other",
+  "Deciduous Shrubland",                                             "other",
+  "Big Sagebrush Shrubland and Steppe",                              "other",
+  "Limber Pine Woodland",                                            "other",
+  "Developed-Upland Evergreen Forest",                               "other",
+  "NLCD-Herbaceous Semi-dry",                                        "other",
+  "Developed-Upland Deciduous Forest",                               "other",
+  "Introduced Perennial Grassland and Forbland",                     "other",
+  "Open Water",                                                      "other",
+  "Barren",                                                          "other",
+  "Agriculture-Pasture and Hay",                                     "other",
+  "Alpine Dwarf-Shrubland, Fell-field and Meadow",                   "other",
+  "Developed-Upland Mixed Forest",                                   "other",
+  "Developed-Upland Shrubland",                                      "other",
+  "Developed-Roads",                                                 "other",
+  "Mountain Mahogany Woodland and Shrubland",                        "other",
+  "Sand Shrubland",                                                  "other",
+  "Grassland",                                                       "other",
+  "Dry Tundra",                                                      "other",
+  "Introduced Riparian Vegetation",                                  "other",
+  "Chaparral",
+          "other",
+      "Desert Scrub",                               "other",
+      "Developed-Medium Intensity",                 "other",
+      "Developed-Upland Herbaceous",                "other",
+      "Introduced Annual Grassland",                "other",
+      "Juniper Woodland and Savanna",                "other",
+      "Low Sagebrush Shrubland and Steppe",          "other",
+      "NLCD-Herbaceous Semi-wet",                    "other",
+      "NLCD-Herbaceous Wetlands",                    "other",
+      "NLCD-Recently Disturbed Forest",              "other",
+      "Salt Desert Scrub",                           "other",
+      "Snow-Ice",                                    "other",
+      "Sparse Vegetation",                           "other"
+)
+
+transects <- transects %>%
+  left_join(evt_lookup, by = "EVT")
+
+# Check for any unmatched categories (should be none / NA)
+transects %>%
+  st_drop_geometry() %>%
+  filter(is.na(EVT_Group)) %>%
+  distinct(EVT)
+
+# Recount using the simplified grouping
+evt_group_counts <- transects %>%
+  st_drop_geometry() %>%
+  count(EVT_Group, sort = TRUE)
+
+print(evt_group_counts)
 ```
 
 ### Plots Join
 
 ```{r}
+# Pull the raster's category table and map raw categories to simplified groups
+cat_tbl <- cats(evt)[[1]]
+names(cat_tbl)
 
+cat_tbl <- cat_tbl %>%
+  rename(EVT = SYSTMGRPNA) %>%            
+  left_join(evt_lookup, by = "EVT") %>%     # evt_lookup from before
+  mutate(EVT_Group = ifelse(is.na(EVT_Group), EVT, EVT_Group))
+
+# Reclassify the raster so cell values = simplified group, not raw SystmGrpNA
+evt_group_levels <- sort(unique(cat_tbl$EVT_Group))
+
+rcl_matrix <- cat_tbl %>%
+  transmute(from = VALUE, to = match(EVT_Group, evt_group_levels)) %>%
+  as.matrix()
+
+evt_group_rast <- classify(evt, rcl_matrix)
+levels(evt_group_rast) <- data.frame(id = seq_along(evt_group_levels),
+                                      EVT_Group = evt_group_levels)
+
+# Exact-area fraction of each group within each plot polygon
+evt_frac <- exact_extract(
+  evt_group_rast,
+  allplots,
+  fun = "frac",
+  append_cols = "unique_id",   
+  progress = FALSE
+)
+
+# Rename frac_<n> -> prop_<group name>
+frac_id_map <- tibble(
+  col   = paste0("frac_", seq_along(evt_group_levels)),
+  group = evt_group_levels
+)
+
+names(evt_frac) <- ifelse(
+  names(evt_frac) %in% frac_id_map$col,
+  paste0("prop_", frac_id_map$group[match(names(evt_frac), frac_id_map$col)]),
+  names(evt_frac)
+)
+
+# Join proportions back onto your plots
+allplots <- allplots %>%
+  left_join(evt_frac, by = "unique_id")
 ```
 
 ## Canopy Cover
