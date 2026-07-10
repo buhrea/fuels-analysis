@@ -17,6 +17,7 @@ library(sf)
 library(car)
 library(corrplot)
 library(randomForest)
+library(pdp)
 
 plots <- st_read("data/processed/fuels_analysis.gpkg", layer = "allplotsDS") 
 plots$northness[is.na(plots$northness)] <- 0
@@ -43,6 +44,8 @@ corrplot(cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax
 
 # Random Forest - Prop high severity
 
+- 7/9 removing proportion extent treated for now
+
 ```{r}
 # Prepare and split data (80% Train, 20% Test)
 set.seed(123) # Ensures identical bootstrap results
@@ -52,7 +55,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
+  prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -65,8 +68,16 @@ print(high_model)
 # Generate predictions on test data
 predictions <- predict(high_model, newdata = test_data)
 
-# Evaluate classification accuracy
-table(Observed = test_data$prop_high_sev, Predicted = predictions)
+# Calculate Regression Evaluation Metrics
+actuals <- test_data$prop_high_sev
+
+# 1. Root Mean Squared Error (Average prediction error size)
+rmse <- sqrt(mean((actuals - predictions)^2))
+cat("Test RMSE:", round(rmse, 4), "\n")
+
+# 2. R-squared on Test Data (Proportion of variance explained)
+r2 <- 1 - (sum((actuals - predictions)^2) / sum((actuals - mean(actuals))^2))
+cat("Test R-squared:", round(r2, 4), "\n")
 
 ```
 
@@ -78,7 +89,66 @@ importance(high_model)
 varImpPlot(high_model)
 ```
 
+Partial dependence plots
+
+```{r}
+clean_train <- as.data.frame(train_data)
+
+# 2. Extract all predictor names directly from your randomForest model object
+# This prevents you from having to type out all 15 variable names manually
+predictors <- rownames(high_model$importance)
+
+# 3. Create a folder to store the plots (if it doesn't already exist)
+output_dir <- "pdp_plots"
+if(!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# 4. Loop through each variable, generate the PDP, and save it
+for (var_name in predictors) {
+  
+  # Print progress to console
+  cat("Generating and saving plot for:", var_name, "\n")
+  
+  # Compute partial dependence using the clean data frame
+  pdp_data <- partial(
+    high_model, 
+    pred.var = var_name, 
+    train = clean_train
+  )
+  
+  # Build a clean ggplot2 visualization
+  p <- autoplot(pdp_data) + 
+    labs(
+      title = paste("Partial Dependence Plot:", var_name),
+      x = var_name,
+      y = "Predicted prop_high_sev"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      axis.title = element_text(size = 11)
+    )
+  
+  # Construct a safe filename (e.g., pdp_plots/pdp_elevation.png)
+  file_path <- file.path(output_dir, paste0("pdp_", var_name, ".png"))
+  
+  # Save the plot with professional dimensions
+  ggsave(
+    filename = file_path, 
+    plot = p, 
+    width = 6, 
+    height = 4.5, 
+    dpi = 300
+  )
+}
+
+cat("\nAll plots have been saved successfully to the '", output_dir, "' directory!\n", sep="")
+```
+
 # Random Forest - Prop mod-high severity
+
+- 7/9 removing proportion extent treated for now
 
 ```{r}
 # Prepare and split data (80% Train, 20% Test)
@@ -89,7 +159,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 mohi_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC,          # Formula: target ~ predictors
+  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -102,8 +172,16 @@ print(mohi_model)
 # Generate predictions on test data
 predictions <- predict(mohi_model, newdata = test_data)
 
-# Evaluate classification accuracy
-table(Observed = test_data$prop_mod_high_sev, Predicted = predictions)
+# Calculate Regression Evaluation Metrics
+actuals <- test_data$prop_mod_high_sev
+
+# 1. Root Mean Squared Error (Average prediction error size)
+rmse <- sqrt(mean((actuals - predictions)^2))
+cat("Test RMSE:", round(rmse, 4), "\n")
+
+# 2. R-squared on Test Data (Proportion of variance explained)
+r2 <- 1 - (sum((actuals - predictions)^2) / sum((actuals - mean(actuals))^2))
+cat("Test R-squared:", round(r2, 4), "\n")
 
 ```
 
@@ -114,3 +192,61 @@ plot(mohi_model)
 importance(mohi_model)
 varImpPlot(mohi_model)
 ```
+
+Partial dependence plots
+
+```{r}
+clean_train <- as.data.frame(train_data)
+
+# 2. Extract all predictor names directly from your randomForest model object
+# This prevents you from having to type out all 15 variable names manually
+predictors <- rownames(mohi_model$importance)
+
+# 3. Create a folder to store the plots (if it doesn't already exist)
+output_dir <- "pdp_plots"
+if(!dir.exists(output_dir)) {
+  dir.create(output_dir)
+}
+
+# 4. Loop through each variable, generate the PDP, and save it
+for (var_name in predictors) {
+  
+  # Print progress to console
+  cat("Generating and saving plot for:", var_name, "\n")
+  
+  # Compute partial dependence using the clean data frame
+  pdp_data <- partial(
+    mohi_model, 
+    pred.var = var_name, 
+    train = clean_train
+  )
+  
+  # Build a clean ggplot2 visualization
+  p <- autoplot(pdp_data) + 
+    labs(
+      title = paste("Partial Dependence Plot:", var_name),
+      x = var_name,
+      y = "Predicted prop_mod_high_sev"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 14),
+      axis.title = element_text(size = 11)
+    )
+  
+  # Construct a safe filename (e.g., pdp_plots/pdp_elevation.png)
+  file_path <- file.path(output_dir, paste0("pdp_mohi_", var_name, ".png"))
+  
+  # Save the plot with professional dimensions
+  ggsave(
+    filename = file_path, 
+    plot = p, 
+    width = 6, 
+    height = 4.5, 
+    dpi = 300
+  )
+}
+
+cat("\nAll plots have been saved successfully to the '", output_dir, "' directory!\n", sep="")
+```
+

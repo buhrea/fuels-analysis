@@ -67,6 +67,13 @@ ggplot(transects_test, aes(x = Point_ID, y = cbi, color = type, group = type)) +
   geom_smooth(method = "loess", se = TRUE) +
   theme_minimal() +
   labs(x = "Point ID", y = "CBI", color = "Type")
+
+ggplot(transects, aes(x = Point_ID, y = cbi, color = type, group = type)) +
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", se = TRUE) +
+  facet_wrap(~TRT_TYPE) +
+  theme_minimal() +
+  labs(x = "Point ID", y = "CBI", color = "Type")
 ```
 
 ## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics (type, age, number, and prev. burn severity), and an interaction between point distance and transect type
