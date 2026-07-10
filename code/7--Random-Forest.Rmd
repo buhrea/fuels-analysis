@@ -17,34 +17,71 @@ library(sf)
 library(car)
 library(corrplot)
 library(randomForest)
+library(patchwork)
 library(pdp)
 
 plots <- st_read("data/processed/fuels_analysis.gpkg", layer = "allplotsDS") 
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
+
+colnames(plots)
+
 plots <- plots %>%
-  mutate(across(c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC"), as.numeric))
+  mutate(across(c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
+
+```
+
+# Look at all individual linear relationships
+```{r}
+predictors <- c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS",
+                 "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire",
+                 "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC",
+                 "prop_aspen", "prop_lodgepole", "prop_mixed.conifer",
+                 "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir", "prop_other")
+
+plot_list_high <- lapply(predictors, function(var) {
+  ggplot(plots, aes(x = .data[[var]], y = prop_high_sev)) +
+    geom_point() +
+    geom_smooth(method = "loess")
+})
+
+names(plot_list_high) <- predictors
+
+wrap_plots(plot_list_high, ncol = 4)
+
+plot_list_mohi <- lapply(predictors, function(var) {
+  ggplot(plots, aes(x = .data[[var]], y = prop_mod_high_sev)) +
+    geom_point() +
+    geom_smooth(method = "loess")
+})
+
+names(plot_list_mohi) <- predictors
+
+wrap_plots(plot_list_mohi, ncol = 4)
 ```
 
 # Calculate VIF scores
 
 ```{r}
-model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + VPD + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC, data = plots)
+model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + VPD + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
 
 vif_scores <- vif(model)
 print(vif_scores)
 
+#removing individual treatment types, TMax, individual EVTs
+model2 <- lm(prop_high_sev ~ northness + eastness + elevation + slope + PR + VS + VPD + ERC + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa, data = plots)
+
+vif_scores <- vif(model2)
+print(vif_scores)
+
+
 
 #Correlation matrix
 plots_corr <- plots %>% st_drop_geometry()
-cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC")], use = "complete.obs")
-
-corrplot(cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC")], use = "complete.obs"), method = "color", addCoef.col = "black")
+cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir")], use = "complete.obs")
 ```
 
 # Random Forest - Prop high severity
-
-- 7/9 removing proportion extent treated for now
 
 ```{r}
 # Prepare and split data (80% Train, 20% Test)
@@ -55,7 +92,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + TCC,          # Formula: target ~ predictors
+  prop_high_sev ~ northness + eastness + elevation + slope + PR + VS + VPD + ERC + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -99,7 +136,7 @@ clean_train <- as.data.frame(train_data)
 predictors <- rownames(high_model$importance)
 
 # 3. Create a folder to store the plots (if it doesn't already exist)
-output_dir <- "pdp_plots"
+output_dir <- "documents/pdp_plots"
 if(!dir.exists(output_dir)) {
   dir.create(output_dir)
 }
@@ -131,7 +168,7 @@ for (var_name in predictors) {
     )
   
   # Construct a safe filename (e.g., pdp_plots/pdp_elevation.png)
-  file_path <- file.path(output_dir, paste0("pdp_", var_name, ".png"))
+  file_path <- file.path(output_dir, paste0(var_name, "hi_pdp", ".png"))
   
   # Save the plot with professional dimensions
   ggsave(
@@ -159,7 +196,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 mohi_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + TCC,          # Formula: target ~ predictors
+  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + TCC + prop_aspen + prop_lodgepole + prop_mixedconifer + prop_other + prop_pinyonjuniper + prop_ponderosa + prop_sprucefir,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -203,7 +240,7 @@ clean_train <- as.data.frame(train_data)
 predictors <- rownames(mohi_model$importance)
 
 # 3. Create a folder to store the plots (if it doesn't already exist)
-output_dir <- "pdp_plots"
+output_dir <- "documents/pdp_plots"
 if(!dir.exists(output_dir)) {
   dir.create(output_dir)
 }
@@ -235,7 +272,7 @@ for (var_name in predictors) {
     )
   
   # Construct a safe filename (e.g., pdp_plots/pdp_elevation.png)
-  file_path <- file.path(output_dir, paste0("pdp_mohi_", var_name, ".png"))
+  file_path <- file.path(output_dir, paste0(var_name, "mohi_pdp",".png"))
   
   # Save the plot with professional dimensions
   ggsave(
