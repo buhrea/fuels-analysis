@@ -92,7 +92,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + PR + VS + VPD + ERC + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa,          # Formula: target ~ predictors
+  prop_high_sev ~ northness + eastness + elevation + slope + PR + VS + VPD + ERC + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -196,7 +196,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 mohi_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + TCC + prop_aspen + prop_lodgepole + prop_mixedconifer + prop_other + prop_pinyonjuniper + prop_ponderosa + prop_sprucefir,          # Formula: target ~ predictors
+  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_extent_treated + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node

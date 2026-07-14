@@ -18,6 +18,7 @@ library(lme4)
 library(glmmTMB)
 library(DHARMa)
 library(ggeffects)
+library(brms)
 
 transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
 transects$TCC <- as.numeric(transects$TCC)
@@ -28,13 +29,16 @@ transects$type <- factor(transects$type, levels = c("control", "entering", "exit
 #Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
 transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
 transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
-transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
+transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 30, transects$AGE)
 ```
 
 ## Response Variable Distribution
 
 ```{r}
 hist(transects$cbi)
+hist(transects$rdnbr)
+
+plot(transects$cbi, transects$rdnbr)
 ```
 
 ## Look at shape of relationship between each predictor and cbi
@@ -108,18 +112,16 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Beta Regression
+# Ordered Beta Regression
 
-Trying a beta regression because the diamond shape in residuals is likely because we are treating bounded data as continuous (cite).
+https://www.cambridge.org/core/journals/political-analysis/article/ordered-beta-regression-a-parsimonious-wellfitting-model-for-continuous-data-with-lower-and-upper-bounds/89F4141DA16D4FC217809B5EB45EEE83 
+
+Ordered beta allows for exact 0s and 1s
 
 ```{r}
 transects$cbi_scaled <- transects$cbi/3
 
-#Adjust to get rid of exact 0s and 1s
-n <- nrow(transects)
-transects$cbi_squeezed <- (transects$cbi_scaled * (n - 1) + 0.5) / n
-
-m2 <- glmmTMB(cbi_squeezed ~ TRT_TYPE + COUNT + AGE + Point_ID*type + (1|Event_ID/Transect_ID), family = beta_family(), data = transects)
+m2 <- glmmTMB(cbi_scaled ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), family = ordbeta, data = transects)
 
 sim_beta <- simulateResiduals(m2)
 plot(sim_beta)
@@ -131,38 +133,34 @@ plot(sim_beta)
 plotResiduals(sim_beta, form = transects$TRT_TYPE)
 plotResiduals(sim_beta, form = transects$type)
 plotResiduals(sim_beta, form = transects$COUNT)
-plotResiduals(sim_beta, form = transects$AGE)
 ```
 
-# Add Age interaction
+## Try a model with rdnbr
 
 ```{r}
-m3 <- glmmTMB(cbi_squeezed ~ TRT_TYPE + COUNT + AGE:treated + Point_ID*type + (1|Event_ID/Transect_ID), family = beta_family(), data = transects)
+m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + AGE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
 
 summary(m3)
-
-sim3 <- simulateResiduals(m3)
-plot(sim3)
-
-# Re-check the AGE-specific residual pattern that flagged the problem originally
-plotResiduals(sim3, form = transects$AGE)
+vif(m3)
 ```
 
-# Add a dispersion formula 
+## Evaluating model assumptions
 
-Addresses uneven variance between treatment type groups
-
+Fitted vs residuals plot
 ```{r}
-m4 <- glmmTMB(
-  cbi_squeezed ~ TRT_TYPE + COUNT + AGE:treated + Point_ID*type + 
-    (1 | Event_ID/Transect_ID),
-  family = beta_family(),
-  dispformula = ~ TRT_TYPE,
-  data = transects
-)
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
 
-summary(m4)
-sim4 <- simulateResiduals(m4)
-plot(sim4)
+# Q-Q plot
+qqnorm(resid(m3), main = "Q-Q Plot of Residuals")
+qqline(resid(m3), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(m3), resid(m3),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
 ```
-
