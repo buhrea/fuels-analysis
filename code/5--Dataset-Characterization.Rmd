@@ -121,6 +121,11 @@ p12 <- ggplot(data=transects, aes(x=cbi, group=TRT_TYPE, fill=TRT_TYPE)) +
     geom_density(adjust=1.5, alpha=.4) +
     theme_minimal()
 p12
+
+p13 <- ggplot(data=transects, aes(x=rdnbr, group=TRT_TYPE, fill=TRT_TYPE)) +
+    geom_density(adjust=1.5, alpha=.4) +
+    theme_minimal()
+p13
 ```
 
 ## Point Density of Plot Characteristics by Treatment Type

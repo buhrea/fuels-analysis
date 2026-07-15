@@ -29,7 +29,7 @@ transects$type <- factor(transects$type, levels = c("control", "entering", "exit
 #Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
 transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
 transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
-transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 30, transects$AGE)
+transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
 ```
 
 ## Response Variable Distribution
