@@ -9,9 +9,14 @@ output: word_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Setup
+
 ```{r}
 library(tidyverse)
 library(here)
+library(keyring)
+library(appeears) #Download daymet from Nasa Earthdata
+library(sf) #Use to request daymet data for a polygon
 ```
 
 # Weather
@@ -74,40 +79,6 @@ for(j in 2010:2024){
   download.file(paste0("https://www.northwestknowledge.net/metdata/data/erc_", j, ".nc"), temp, mode="wb")
   }
 }
-```
-
-Daymet
-
-```{r}
-test_url <- paste0(
-  "https://thredds.daac.ornl.gov/thredds/ncss/ornldaac/2129",
-  "/daymet_v4_daily_na_tmax_2020.nc",
-  "?var=lat&var=lon&var=tmax",
-  "&north=41.10&west=-109.15&east=-101.94&south=36.89",
-  "&disableProjSubset=on&horizStride=1",
-  "&time_start=2020-01-01T12:00:00Z&time_end=2020-12-31T12:00:00Z",
-  "&timeStride=1&accept=netcdf"
-)
-library(curl)
-
-netrc_path <- file.path(Sys.getenv("USERPROFILE"), "_netrc")
-writeLines(c(
-  "machine urs.earthdata.nasa.gov",
-  "login buhrea0926",
-  "password SundayMorning420!"
-), netrc_path)
-
-h <- new_handle(netrc = 1, followlocation = TRUE,
-                cookiejar = tempfile(), cookiefile = tempfile())
-
-curl_download(test_url, "test_tmax_2020.nc", handle = h)
-
-# verify before trusting it
-readLines("test_tmax_2020.nc", n = 2)   # should look like binary garbage, NOT html/text
-
-library(terra)
-r <- rast("test_tmax_2020.nc")
-plot(r[[1]])
 ```
 
 # Pre-Fire Fuels
