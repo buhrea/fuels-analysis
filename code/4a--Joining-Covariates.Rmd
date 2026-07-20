@@ -211,15 +211,139 @@ allplots <- allplots %>%
 
 # Weather & Climate
 
-Weather variables were obtained from GridMet.
+Weather variables were obtained from Daymet. Updated from Gridmet for better resolution to address overfitting in random forest models.
 
-## Load data
+## Load data - Gridmet
 
 ```{r}
-base_path <- "D:/Spatial_Data/GridMet"
+# base_path <- "D:/Spatial_Data/GridMet"
 ```
 
-## Transects Join
+## Transects Join - Gridmet
+
+```{r}
+# final_data <- NULL
+# 
+# # Loop by Year
+# for(yr in unique(transects$year)){
+#   
+#   # Subset points for this year
+#   transects_yr <- transects[transects$year == yr, ]
+#   
+#   # Loop through variables
+#   for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
+#     
+#     # Map folder name to the prefix
+#     prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
+#     file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
+#     
+#     # Load the raster cube
+#     r <- rast(file_path)
+#     
+#     # Extract all layers for the points in this year
+#     ext <- terra::extract(r, vect(transects_yr))
+#     
+#     # Take the specific day value
+#     values_vector <- sapply(1:nrow(transects_yr), function(i) {
+#       day_val <- transects_yr$dob[i]
+#       
+#       # Handle cases where dob is NA
+#       if(is.na(day_val)) return(NA_real_)
+#       
+#       # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
+#       day_col <- day_val + 1
+#       
+#       # Safety check for bounds and missing extraction rows
+#       if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
+#       
+#       return(ext[i, day_col])
+#     })
+#     
+#     # Add this variable to year-subset
+#     transects_yr[[v]] <- values_vector
+#   }
+#   
+#   # Bind results
+#   final_data <- bind_rows(final_data, st_as_sf(transects_yr))
+# }
+# 
+# transects <- final_data
+# 
+# transects <- transects %>%
+#   mutate(
+#     TMax = TMax - 273.15,      # K to C
+#   )
+# 
+# #Reproject transects back to target crs
+# transects <- st_transform(transects, target_crs)
+```
+
+## Plots Join - Gridmet
+
+```{r}
+# final_data <- NULL
+# 
+# # Loop by Year
+# for(yr in unique(allplots$year)){
+#   
+#   # Subset points for this year
+#   allplots_yr <- allplots[allplots$year == yr, ]
+#   
+#   # Loop through your variables
+#   for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
+#     
+#     # Map folder name to the prefix
+#     prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
+#     file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
+#     
+#     # Load the raster cube
+#     r <- rast(file_path)
+#     
+#     # Extract all layers for the points in this year
+#     ext <- terra::extract(r, vect(allplots_yr), fun = mean)
+#     
+#     # Take the specific day value
+#     values_vector <- sapply(1:nrow(allplots_yr), function(i) {
+#       day_val <- allplots_yr$dob[i]
+#       
+#       # Handle cases where dob is NA
+#       if(is.na(day_val)) return(NA_real_)
+#       
+#       # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
+#       day_col <- day_val + 1
+#       
+#       # Safety check for bounds and missing extraction rows
+#       if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
+#       
+#       return(ext[i, day_col])
+#     })
+#     
+#     # Add this variable to our year-subset
+#     allplots_yr[[v]] <- values_vector
+#   }
+#   
+#   # 5. Bind results
+#   final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
+# }
+# 
+# allplots <- final_data
+# 
+# allplots <- allplots %>%
+#   mutate(
+#     TMax = TMax - 273.15,      # K to C
+#   )
+# 
+# #Reproject transects back to target crs
+# allplots <- st_transform(allplots, target_crs)
+```
+
+## Load data - Daymet
+
+```{r}
+base_path <- "D:/Spatial_Data/Daymet/Daymet"
+```
+
+## Transects Join - Daymet
 
 ```{r}
 final_data <- NULL
@@ -231,17 +355,11 @@ for(yr in unique(transects$year)){
   transects_yr <- transects[transects$year == yr, ]
   
   # Loop through variables
-  for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
+  for(v in c("PRCP", "TMAX", "TMIN", "VP")){
     
     # Map folder name to the prefix
-    prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
-    file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
-    
-    if(!file.exists(file_path)) {
-       warning(paste("File not found:", file_path))
-       transects_yr[[v]] <- NA_real_
-       next
-    }
+    prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN" = "tmin", "VP"="vp")
+    file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
     
     # Load the raster cube
     r <- rast(file_path)
@@ -265,7 +383,7 @@ for(yr in unique(transects$year)){
       return(ext[i, day_col])
     })
     
-    # Add this variable to our year-subset
+    # Add this variable to year-subset
     transects_yr[[v]] <- values_vector
   }
   
@@ -277,14 +395,15 @@ transects <- final_data
 
 transects <- transects %>%
   mutate(
-    TMax = TMax - 273.15,      # K to C
+    TMAX = (TMAX * (9/5)) + 32,      # C to F
+    TMIN = (TMIN * (9/5)) + 32
   )
 
 #Reproject transects back to target crs
 transects <- st_transform(transects, target_crs)
 ```
 
-## Plots Join
+## Plots Join - Daymet
 
 ```{r}
 final_data <- NULL
@@ -295,18 +414,12 @@ for(yr in unique(allplots$year)){
   # Subset points for this year
   allplots_yr <- allplots[allplots$year == yr, ]
   
-  # Loop through your variables
-  for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
+  # Loop through variables
+  for(v in c("PRCP", "TMAX", "TMIN", "VP")){
     
     # Map folder name to the prefix
-    prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
-    file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
-    
-    if(!file.exists(file_path)) {
-       warning(paste("File not found:", file_path))
-       allplots_yr[[v]] <- NA_real_
-       next
-    }
+    prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN" = "tmin", "VP"="vp")
+    file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
     
     # Load the raster cube
     r <- rast(file_path)
@@ -342,238 +455,58 @@ allplots <- final_data
 
 allplots <- allplots %>%
   mutate(
-    TMax = TMax - 273.15,      # K to C
+    TMAX = (TMAX * (9/5)) + 32,      # C to F
+    TMIN = (TMIN * (9/5)) + 32
   )
 
 #Reproject transects back to target crs
 allplots <- st_transform(allplots, target_crs)
 ```
 
-## Download Daymet from Nasa Earthdata
+Testing a different method of weather extraction (extract only for the specific day we need) to see if it is faster
 
 ```{r}
-#login for nasa earth data - already saved username and password
-options(keyring_backend = "file")
-keyring::keyring_unlock(keyring = "file")
-
-products <- rs_products()
-daymet_info <- products[grepl("daymet", products$Product, ignore.case = TRUE),
-                         c("Product", "ProductAndVersion", "Description")]
-print(daymet_info)                        # confirm which version (V4) you want
-
-daymet_product <- daymet_info$ProductAndVersion[1]   # set explicitly once confirmed
-
-daymet_layers <- rs_layers(daymet_product)
-print(daymet_layers$Layer)                # confirm exact tmax/prcp layer strings
-
-layer_tmax <- grep("tmax", daymet_layers$Layer, ignore.case = TRUE, value = TRUE)
-layer_tmin <- grep("tmin", daymet_layers$Layer, ignore.case = TRUE, value = TRUE)
-layer_prcp <- grep("prcp", daymet_layers$Layer, ignore.case = TRUE, value = TRUE)
-```
-
-## Daymet Transects Join
-
-```{r}
-transects_wgs <- st_transform(transects, 4326)
-transects_wgs <- transects_wgs %>%
-  filter(!is.na(dob)) %>%                                   # drop points with no burn date - can't query without one
-  mutate(
-    burn_date = as.Date(paste0(year, "-01-01")) + (dob - 1),
-    unique_id = paste(Event_ID, Transect_ID, Point_ID, sep = "_")
-  )
-
-coords <- st_coordinates(transects_wgs)
-
-locs <- data.frame(
-  subtask   = transects_wgs$unique_id,
-  latitude  = coords[, 2],
-  longitude = coords[, 1],
-  start     = as.character(transects_wgs$burn_date),
-  end       = as.character(transects_wgs$burn_date),
-  stringsAsFactors = FALSE
-)
-
-task_df <- bind_rows(
-  locs %>% mutate(task = "transects_daymet", product = daymet_product, layer = layer_tmax),
-  locs %>% mutate(task = "transects_daymet", product = daymet_product, layer = layer_tmin),
-  locs %>% mutate(task = "transects_daymet", product = daymet_product, layer = layer_prcp)
-)
-
-task_df <- data.frame(
-  task      = task_df$task,
-  subtask   = task_df$subtask,
-  latitude  = task_df$latitude,
-  longitude = task_df$longitude,
-  start     = task_df$start,
-  end       = task_df$end,
-  product   = task_df$product,
-  layer     = task_df$layer,
-  stringsAsFactors = FALSE
-)
-
-str(task_df)   # confirm exactly these 8 columns, nothing extra, before proceeding
-
-unique_ids <- unique(task_df$subtask)
-length(unique_ids)   # should be ~4633 if 13899 / 3 layers
-
-chunk_size <- 200     # ~1200 rows per chunk at 3 layers/point - adjust down if this still overflows
-id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / chunk_size))
-
-task_list <- lapply(id_chunks, function(ids) {
-  d <- task_df[task_df$subtask %in% ids, ]
-  d$task <- paste0(d$task, "_chunk", match(list(ids), id_chunks))  # unique task name per chunk
-  rs_build_task(df = d)
-})
-
-# rs_request_batch(
-#   request_list = task_list,
-#   user    = "buhrea0926",
-#   path    = "D:/Spatial_Data/Daymet/transects",
-#   workers = 2,
-#   verbose = TRUE
-# )
-
-## Submit tasks on appeaars and save
-submitted <- lapply(task_list, function(t) {
-  rs_request(
-    request  = t,
-    user     = "buhrea0926",
-    transfer = FALSE,     # stage only - returns almost immediately, doesn't download
-    path     = "D:/Spatial_Data/Daymet/transects",
-    verbose  = TRUE
-  )
-})
-
-task_ids <- sapply(submitted, function(r) r$get_task_id())
-saveRDS(task_ids, "D:/Spatial_Data/Daymet/transects/task_ids.rds")  # so you can resume later, even in a new session
-
-## Download data 
-task_ids <- readRDS("D:/Spatial_Data/Daymet/transects/task_ids.rds")
-
-done_names <- basename(list.dirs("D:/Spatial_Data/Daymet/transects", recursive = FALSE))
-
-for (i in seq_along(task_ids)) {
-  chunk_name <- paste0("transects_daymet_chunk", i)
-  if (chunk_name %in% done_names) {
-    message("Already have chunk ", i, " - skipping")
-    next
-  }
-
-  tryCatch({
-    rs_transfer(
-      task_id = task_ids[i],
-      user    = "buhrea0926",
-      path    = "D:/Spatial_Data/Daymet/transects",
-      verbose = TRUE
-    )
-  }, error = function(e) {
-    message("Chunk ", i, " not ready yet or failed: ", conditionMessage(e))
-  })
-}
-## Done with download
-
-status_df <- rs_list_task(user = "buhrea0926")
-names(status_df)   # confirm actual column names - likely something like task_id / status
-
-status_df[status_df$task_id %in% task_ids, c("task_id", "status")]
-
-
-
-
-result_files <- list.files(
-  "D:/Spatial_Data/Daymet/transects",
-  pattern = "-results\\.csv$", recursive = TRUE, full.names = TRUE
-)
-daymet_pts <- do.call(rbind, lapply(result_files, read.csv))
-nrow(daymet_pts) 
-names(daymet_pts)     # <-- check actual column names before the join below
-
-daymet_pts <- daymet_pts %>%
-  rename(Point_ID = ID) %>%              # adjust to the real ID column
-  mutate(date = as.Date(Date),           # adjust to the real date column
-         yday = as.integer(format(date, "%j")))
-
-transects <- transects %>%
-  left_join(
-    daymet_pts %>%
-      select(Point_ID, yday,
-             TMax_daymet = matches(layer_tmax),
-             PR_daymet   = matches(layer_prcp)),
-    by = c("Point_ID" = "Point_ID", "dob" = "yday")
-  ) %>%
-  st_transform(target_crs)
-```
-
-## Daymet Plots Join
-
-```{r}
-library(terra)
-library(exactextractr)
-
-plot_daymet_path <- "D:/Spatial_Data/Daymet_AppEEARS/area"
-dir.create(plot_daymet_path, showWarnings = FALSE, recursive = TRUE)
-
 final_data <- NULL
 
-for (yr in unique(allplots$year)) {
-
+# Loop by Year
+for(yr in unique(allplots$year)){
+  
+  # Subset points for this year
   allplots_yr <- allplots[allplots$year == yr, ]
-
-  roi_yr <- allplots_yr %>%
-    st_transform(4326) %>%
-    st_union() %>%
-    st_convex_hull() %>%
-    st_buffer(0.01) %>%          # small buffer so edge plots aren't clipped
-    st_as_sf()
-
-  for (v in list(list(name = "TMax", layer = layer_tmax),
-                 list(name = "PR",   layer = layer_prcp))) {
-
-    area_df <- data.frame(
-      task    = paste0("plots_", yr, "_", v$name),
-      subtask = paste0(v$name, "_", yr),
-      start   = paste0(yr, "-01-01"),
-      end     = paste0(yr, "-12-31"),
-      product = daymet_product,
-      layer   = v$layer
-    )
-
-    area_task <- rs_build_task(df = area_df, roi = roi_yr, format = "geotiff")
-
-    rs_request(
-      request  = area_task,
-      user     = "your_earthdata_username",
-      transfer = TRUE,
-      path     = plot_daymet_path,
-      verbose  = TRUE
-    )
-
-    tif_files <- list.files(
-      file.path(plot_daymet_path, area_df$task[1]),
-      pattern = "\\.tif$", full.names = TRUE
-    )
-    # confirm these come back sorted by date/day-of-year before trusting band indexing
-    r <- rast(tif_files)
-
-    allplots_yr_proj <- st_transform(allplots_yr, crs(r))
-    ext <- exact_extract(r, allplots_yr_proj, fun = "mean")
-
-    values_vector <- sapply(1:nrow(allplots_yr), function(i) {
-      day_val <- allplots_yr$dob[i]
-      if (is.na(day_val) || day_val > ncol(ext) || day_val < 1) return(NA_real_)
-      return(ext[i, day_val])
-    })
-
-    allplots_yr[[paste0(v$name, "_daymet")]] <- values_vector
-  }
-
+  
+  # Loop through variables
+  for(v in c("PRCP", "TMAX", "TMIN", "VP")){
+  prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
+  file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
+  r <- rast(file_path)
+  
+  pts <- vect(allplots_yr)
+  day_layer <- allplots_yr$dob  # 1-indexed day-of-year matching layer number
+  
+  # Only rows with valid dob
+  valid <- !is.na(day_layer) & day_layer >= 1 & day_layer <= nlyr(r)
+  
+  vals <- rep(NA_real_, nrow(allplots_yr))
+  vals[valid] <- terra::extract(r, pts[valid, ], layer = day_layer[valid], fun = mean)[, 2]
+  
+  allplots_yr[[v]] <- vals
+}
+  
+  # 5. Bind results
   final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
 }
 
-allplots <- final_data
-allplots <- st_transform(allplots, target_crs)
+# allplots <- final_data
+# 
+# allplots <- allplots %>%
+#   mutate(
+#     TMAX = (TMAX * (9/5)) + 32,      # C to F
+#     TMIN = (TMIN * (9/5)) + 32
+#   )
+# 
+# #Reproject transects back to target crs
+# allplots <- st_transform(allplots, target_crs)
 ```
-
 
 # Treatment Characteristics
 
