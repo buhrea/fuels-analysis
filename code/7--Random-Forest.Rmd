@@ -27,14 +27,13 @@ plots$eastness[is.na(plots$eastness)] <- 0
 colnames(plots)
 
 plots <- plots %>%
-  mutate(across(c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
+  mutate(across(c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
 
 ```
 
 # Look at all individual linear relationships
 ```{r}
-predictors <- c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS",
-                 "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire",
+predictors <- c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire",
                  "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC",
                  "prop_aspen", "prop_lodgepole", "prop_mixed.conifer",
                  "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir", "prop_other")
@@ -63,22 +62,33 @@ wrap_plots(plot_list_mohi, ncol = 4)
 # Calculate VIF scores
 
 ```{r}
-model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + VPD + ERC + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
+model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + TMIN + TOTAL_COUNT + prop_Thinning + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
 
-vif_scores <- vif(model)
-print(vif_scores)
+vif(model)
 
-#removing individual treatment types, TMax, individual EVTs
-model2 <- lm(prop_high_sev ~ northness + eastness + elevation + slope + PR + VS + VPD + ERC + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa, data = plots)
+#removing individual treatment types and individual EVTs
+model2 <- lm(prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TMIN + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa, data = plots)
 
-vif_scores <- vif(model2)
-print(vif_scores)
-
-
+vif(model2)
 
 #Correlation matrix
 plots_corr <- plots %>% st_drop_geometry()
-cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMax", "PR", "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir")], use = "complete.obs")
+cor_matrix <- cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Thinning", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir")], use = "complete.obs")
+
+# turn into long format, drop diagonal and duplicate pairs
+cor_df <- as.data.frame(as.table(cor_matrix))
+names(cor_df) <- c("var1", "var2", "cor")
+
+cor_df <- cor_df %>%
+  filter(var1 != var2) %>%
+  mutate(pair = paste(pmin(as.character(var1), as.character(var2)),
+                       pmax(as.character(var1), as.character(var2)))) %>%
+  distinct(pair, .keep_all = TRUE) %>%
+  filter(abs(cor) > 0.5) %>%
+  arrange(desc(abs(cor))) %>%
+  select(var1, var2, cor)
+
+print(cor_df)
 ```
 
 # Random Forest - Prop high severity
@@ -92,7 +102,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + PR + VS + VPD + ERC + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,          # Formula: target ~ predictors
+  prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,   
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -196,7 +206,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 mohi_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMax + PR + VS + ERC + TOTAL_COUNT + prop_extent_treated + TCC,          # Formula: target ~ predictors
+  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + VS + ERC + TOTAL_COUNT + prop_extent_treated + TCC,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node

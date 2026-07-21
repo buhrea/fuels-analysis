@@ -37,8 +37,31 @@ transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
 ```{r}
 hist(transects$cbi)
 hist(transects$rdnbr)
-
 plot(transects$cbi, transects$rdnbr)
+
+#Going to remove negatives and 0s from rdnbr to play around with it
+transects$rdnbr_pos <- ifelse(transects$rdnbr > 0, transects$rdnbr, NA)
+hist(transects$rdnbr_pos)
+hist(log(transects$rdnbr_pos))
+
+ggplot(transects, aes(x = rdnbr_pos)) +
+  geom_histogram(bins = 15, fill = "grey80", color = "black") +
+  facet_wrap(~ TRT_TYPE, scales = "free_y") +  # free_y since group sizes likely differ
+  labs(title = "RdNBR by Treatment Type",
+       x = "rdnbr_pos", y = "Frequency") +
+  theme_minimal()
+
+ggplot(transects_test, aes(x = rdnbr_pos)) +
+  geom_histogram(bins = 15, fill = "grey80", color = "black") +
+  facet_wrap(~ TRT_TYPE, scales = "free_y") +  # free_y since group sizes likely differ
+  labs(title = "RdNBR by Treatment Type",
+       x = "rdnbr_pos", y = "Frequency") +
+  theme_minimal()
+
+ggplot(transects, aes(x = rdnbr_pos)) +
+  geom_histogram(bins = 15, fill = "grey80", color = "black") +
+  facet_wrap(~ Incid_Name, scales = "free_y") +
+  theme_minimal()
 ```
 
 ## Look at shape of relationship between each predictor and cbi
@@ -164,3 +187,50 @@ abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1))
 ```
+
+## Try a model with rdnbr
+
+```{r}
+m4 <- lmer(rdnbr_pos ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+
+summary(m4)
+vif(m4)
+```
+
+## Evaluating model assumptions
+
+Fitted vs residuals plot
+```{r}
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(m4), main = "Q-Q Plot of Residuals")
+qqline(resid(m4), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(m4), resid(m4),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Try a Gamma family
+
+Used to model a response distribution that is positive, right skewed, and continuous
+
+```{r}
+library(glmmTMB)
+
+m4_gamma <- glmmTMB(
+  rdnbr_pos ~ TRT_TYPE + COUNT + Point_ID * type + (1 | Event_ID/Transect_ID),
+  data = transects,
+  family = Gamma(link = "log")
+)
+
+simulateResiduals(m4_gamma) |> plot()
+```
+
