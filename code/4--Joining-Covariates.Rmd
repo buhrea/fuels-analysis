@@ -1,5 +1,5 @@
 ---
-title: "3b--Joining-Covariates"
+title: "4--Joining-Covariates"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output: pdf_document
@@ -348,46 +348,27 @@ base_path <- "D:/Spatial_Data/Daymet/Daymet"
 ```{r}
 final_data <- NULL
 
-# Loop by Year
 for(yr in unique(transects$year)){
-  
-  # Subset points for this year
+
   transects_yr <- transects[transects$year == yr, ]
-  
-  # Loop through variables
+
   for(v in c("PRCP", "TMAX", "TMIN", "VP")){
-    
-    # Map folder name to the prefix
-    prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN" = "tmin", "VP"="vp")
+    prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
     file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
-    
-    # Load the raster cube
     r <- rast(file_path)
-    
-    # Extract all layers for the points in this year
-    ext <- terra::extract(r, vect(transects_yr))
-    
-    # Take the specific day value
-    values_vector <- sapply(1:nrow(transects_yr), function(i) {
-      day_val <- transects_yr$dob[i]
-      
-      # Handle cases where dob is NA
-      if(is.na(day_val)) return(NA_real_)
-      
-      # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
-      day_col <- day_val + 1
-      
-      # Safety check for bounds and missing extraction rows
-      if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
-      
-      return(ext[i, day_col])
-    })
-    
-    # Add this variable to year-subset
-    transects_yr[[v]] <- values_vector
+
+    pts <- vect(transects_yr)
+    day_layer <- transects_yr$dob
+
+    # Only rows with valid dob
+    valid <- !is.na(day_layer) & day_layer >= 1 & day_layer <= nlyr(r)
+
+    vals <- rep(NA_real_, nrow(transects_yr))
+    vals[valid] <- terra::extract(r, pts[valid, ], layer = day_layer[valid])[, "value"]
+
+    transects_yr[[v]] <- vals
   }
-  
-  # Bind results
+
   final_data <- bind_rows(final_data, st_as_sf(transects_yr))
 }
 
@@ -402,34 +383,6 @@ transects <- transects %>%
 #Reproject transects back to target crs
 transects <- st_transform(transects, target_crs)
 ```
-
-Next time we are running this, try this code chunk in place of the parallel part above. May be faster.
-```{r}
-# for(yr in unique(transects$year)){
-#   
-#   transects_yr <- transects[transects$year == yr, ]
-#   
-#   for(v in c("PRCP", "TMAX", "TMIN", "VP")){
-#     prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
-#     file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
-#     r <- rast(file_path)
-#     
-#     pts <- vect(transects_yr)
-#     day_layer <- transects_yr$dob
-#     
-#     # Only rows with valid dob
-#     valid <- !is.na(day_layer) & day_layer >= 1 & day_layer <= nlyr(r)
-#     
-#     vals <- rep(NA_real_, nrow(transects_yr))
-#     vals[valid] <- terra::extract(r, pts[valid, ], layer = day_layer[valid])[, 2]
-#     
-#     transects_yr[[v]] <- vals
-#   }
-#   
-#   final_data <- bind_rows(final_data, st_as_sf(transects_yr))
-# }
-```
-
 
 ## Plots Join - Daymet
 
@@ -501,19 +454,10 @@ treats <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
 
 treats <- treats %>%
   mutate(TRT_TYPE = case_when(
-    # Label Wildfires
     MGT_TYPE == "Wildfire" ~ "Wildfire",
-    
-    # Catch NAs in ACTIVITY where MGT_TYPE is Wildfire 
-    is.na(ACTIVITY) & MGT_TYPE == "Wildfire" ~ "Wildfire",
-    
-    # Catch specific removal activities
     ACTIVITY %in% c("Removal", "Pile Burn") ~ "Removal",
-    
     ACTIVITY %in% "Broadcast Burn" ~ "Broadcast Burn",
-    
-    # Everything else becomes thinning
-    TRUE ~ "Thinning"
+    ACTIVITY %in% c("Pile Fuels", "Mastication", "Manual", "Mulching", "Mechanical", "Lop and Scatter", "Chemical") ~ "Rearrangement"
   ))
 ```
 
@@ -566,7 +510,7 @@ treatment_summary <- joined_raw %>%
   ungroup() %>%
   
   # Keep only our point key, the count, and the specific variables you requested
-  select(point_id, COUNT, YEAR_COMP, EARLY_YEAR, AGE, TRT_TYPE)
+  select(point_id, COUNT, YEAR_COMP, EARLY_YEAR, AGE, TRT_TYPE, OBJECTID)
 
 # Join the processed attributes back to your original spatial transect object
 transects <- transects %>%

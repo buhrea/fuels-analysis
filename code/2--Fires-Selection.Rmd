@@ -187,8 +187,8 @@ elev_df <- as.data.frame(elev, xy = TRUE) %>%
 elev <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/Lf2020_Elev_CONUS.tif") %>%
   project(crs(fires_sub)) %>%
   aggregate(elev, fact = 3, fun = "mean") %>%
-  crop(vect(state)) %>%             
-  mask(vect(state))                 
+  crop(vect(state)) %>%
+  mask(vect(state))
 
 # Make a map!
 map <- ggplot() +

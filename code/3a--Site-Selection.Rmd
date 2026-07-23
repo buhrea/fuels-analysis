@@ -221,7 +221,8 @@ st_write(
 #Collapse treatment dataset
 treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
   st_make_valid() %>%
-  st_transform(target_crs)
+  st_transform(target_crs) %>%
+  filter(ACTIVITY != "Plant Trees")
 flat <- st_union(treatments)
 
 # Calculate the total area of each circle plot
