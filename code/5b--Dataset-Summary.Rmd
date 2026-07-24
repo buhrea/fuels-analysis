@@ -1,0 +1,56 @@
+---
+title: "5b--Dataset-Summary"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 4, fig.height = 4, tidy = TRUE)
+
+library(tidyverse)
+library(here)
+library(sf)
+library(kableExtra)
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") %>%
+  filter(!Incid_Name %in% c("TRAIL SPRINGS", "JUNKINS"))
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
+  filter(!Incid_Name %in% c("TRAIL SPRINGS", "JUNKINS"))
+```
+
+# Total Number of Transects
+
+```{r}
+nrow(transects)/10
+```
+
+# Transect Sampling Summary Table
+
+```{r}
+transect_summary <- transects %>%
+  st_drop_geometry() %>%          
+  group_by(Incid_Name) %>%
+  summarise(
+    n_transects   = n_distinct(Transect_ID),
+    n_entering    = sum(type == "entering", na.rm = TRUE)/10,
+    n_exiting     = sum(type == "exiting", na.rm = TRUE)/10,
+    n_control     = sum(type == "control", na.rm = TRUE)/10,
+    .groups = "drop"
+  ) %>%
+  arrange(Incid_Name)
+
+
+transect_summary %>%
+  kable(
+    col.names = c("Fire Name", "Total", "Entering", "Exiting", "Control"),
+    caption = "Number of sampled transects within each fire",
+    align = "lcccc"
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE
+  ) 
+```
+
+# 
