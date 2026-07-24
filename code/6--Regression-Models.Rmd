@@ -15,6 +15,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
 library(sf)
 library(lme4)
+library(car)
 library(glmmTMB)
 library(DHARMa)
 library(ggeffects)
@@ -23,7 +24,7 @@ library(brms)
 transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
 transects$TCC <- as.numeric(transects$TCC)
 transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
-transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Thinning", "Removal", "Broadcast Burn", "Wildfire"))
+transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Rearrangement", "Removal", "Broadcast Burn", "Wildfire"))
 transects$type <- factor(transects$type, levels = c("control", "entering", "exiting"))
 
 #Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
@@ -51,13 +52,6 @@ ggplot(transects, aes(x = rdnbr_pos)) +
        x = "rdnbr_pos", y = "Frequency") +
   theme_minimal()
 
-ggplot(transects_test, aes(x = rdnbr_pos)) +
-  geom_histogram(bins = 15, fill = "grey80", color = "black") +
-  facet_wrap(~ TRT_TYPE, scales = "free_y") +  # free_y since group sizes likely differ
-  labs(title = "RdNBR by Treatment Type",
-       x = "rdnbr_pos", y = "Frequency") +
-  theme_minimal()
-
 ggplot(transects, aes(x = rdnbr_pos)) +
   geom_histogram(bins = 15, fill = "grey80", color = "black") +
   facet_wrap(~ Incid_Name, scales = "free_y") +
@@ -67,29 +61,17 @@ ggplot(transects, aes(x = rdnbr_pos)) +
 ## Look at shape of relationship between each predictor and cbi
 
 ```{r}
-transects_test <- filter(transects, Incid_Name != "CAMERON PEAK")
 ggplot(transects, aes(x = TRT_TYPE, y = cbi)) +
-  geom_boxplot()
-ggplot(transects_test, aes(x = TRT_TYPE, y = cbi)) +
   geom_boxplot()
 
 ggplot(transects, aes(x = COUNT, y = cbi)) +
   geom_point()
-ggplot(transects_test, aes(x = COUNT, y = cbi)) +
-  geom_point()
 
 ggplot(transects, aes(x = AGE, y = cbi)) +
-  geom_point()
-ggplot(transects_test, aes(x = AGE, y = cbi)) +
   geom_point()
 
 
 ggplot(transects, aes(x = Point_ID, y = cbi, color = type, group = type)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "loess", se = TRUE) +
-  theme_minimal() +
-  labs(x = "Point ID", y = "CBI", color = "Type")
-ggplot(transects_test, aes(x = Point_ID, y = cbi, color = type, group = type)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "loess", se = TRUE) +
   theme_minimal() +
@@ -161,7 +143,7 @@ plotResiduals(sim_beta, form = transects$COUNT)
 ## Try a model with rdnbr
 
 ```{r}
-m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + AGE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
 
 summary(m3)
 vif(m3)
@@ -188,7 +170,43 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-## Try a model with rdnbr
+## Try a model with rdnbr and weighted least squares
+
+Or dispersion formula?
+```{r}
+m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+
+summary(m3)
+vif(m3)
+
+library(DHARMa)
+sim <- simulateResiduals(m3)
+plotResiduals(sim, form = transects$TRT_TYPE)
+plotResiduals(sim, form = transects$Event_ID)
+```
+
+## Evaluating model assumptions
+
+Fitted vs residuals plot
+```{r}
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(m3), main = "Q-Q Plot of Residuals")
+qqline(resid(m3), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(m3), resid(m3),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+## Try a model with only positive rdnbr
 
 ```{r}
 m4 <- lmer(rdnbr_pos ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)

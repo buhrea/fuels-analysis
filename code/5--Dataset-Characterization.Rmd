@@ -3,6 +3,7 @@ title: "5--Data-Characterization"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
 ---
@@ -27,7 +28,7 @@ transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
 plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS")
 ```
 
-## Summary Table of Treatment Type and Mean CBI for Transects and Plots
+## Summary Table of Treatment Type and Mean rdnbr for Transects and Plots
 
 ```{r}
 # # Summary for transects
@@ -36,10 +37,10 @@ plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS
 #   group_by(TRT_TYPE) %>%
 #   summarise(
 #     n = n(),
-#     mean_cbi = round(mean(cbi, na.rm = TRUE), 3),
-#     sd_cbi = round(sd(cbi, na.rm = TRUE), 3),
-#     min_cbi = round(min(cbi, na.rm = TRUE), 3),
-#     max_cbi = round(max(cbi, na.rm = TRUE), 3)
+#     mean_rdnbr = round(mean(rdnbr, na.rm = TRUE), 3),
+#     sd_rdnbr = round(sd(rdnbr, na.rm = TRUE), 3),
+#     min_rdnbr = round(min(rdnbr, na.rm = TRUE), 3),
+#     max_rdnbr = round(max(rdnbr, na.rm = TRUE), 3)
 #   ) %>%
 #   mutate(source = "Transects")
 # 
@@ -49,25 +50,25 @@ plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS
 #   group_by(prop_extent_treated) %>%
 #   summarise(
 #     n = n(),
-#     mean_cbi = round(mean(mean_cbi, na.rm = TRUE), 3),
-#     sd_cbi = round(sd(mean_cbi, na.rm = TRUE), 3),
-#     min_cbi = round(min(mean_cbi, na.rm = TRUE), 3),
-#     max_cbi = round(max(mean_cbi, na.rm = TRUE), 3)
+#     mean_rdnbr = round(mean(mean_rdnbr, na.rm = TRUE), 3),
+#     sd_rdnbr = round(sd(mean_rdnbr, na.rm = TRUE), 3),
+#     min_rdnbr = round(min(mean_rdnbr, na.rm = TRUE), 3),
+#     max_rdnbr = round(max(mean_rdnbr, na.rm = TRUE), 3)
 #   ) %>%
 #   mutate(source = "Plots")
 # 
 # # Combined table
 # bind_rows(transect_summary, plot_summary) %>%
-#   select(source, TRT_TYPE, n, mean_cbi, sd_cbi, min_cbi, max_cbi) %>%
+#   select(source, TRT_TYPE, n, mean_rdnbr, sd_rdnbr, min_rdnbr, max_rdnbr) %>%
 #   arrange(source, TRT_TYPE) %>%
 #   knitr::kable(
-#     col.names = c("Source", "Treatment Type", "N", "Mean CBI", "SD CBI", "Min CBI", "Max CBI"),
-#     caption = "Summary of Treatment Type and CBI by Data Source"
+#     col.names = c("Source", "Treatment Type", "N", "Mean rdnbr", "SD rdnbr", "Min rdnbr", "Max rdnbr"),
+#     caption = "Summary of Treatment Type and rdnbr by Data Source"
 #   )
 # 
 hist(plots$prop_extent_treated)
-hist(transects$cbi)
-range(transects$cbi)
+hist(transects$rdnbr)
+range(transects$rdnbr)
 ```
 
 ## Point Density of Transect Characteristics by Treatment Type
@@ -95,20 +96,15 @@ p4 <-  ggplot(data=transects, aes(x=slope, group=TRT_TYPE, fill=TRT_TYPE)) +
 p4
 
 #Weather and Climate
-p5 <- ggplot(data=transects, aes(x=TMax, group=TRT_TYPE, fill=TRT_TYPE)) +
+p5 <- ggplot(data=transects, aes(x=TMAX, group=TRT_TYPE, fill=TRT_TYPE)) +
     geom_density(adjust=1.5, alpha=.4) +
     theme_minimal()
 p5
 
-p6 <- ggplot(data=transects, aes(x=PR, group=TRT_TYPE, fill=TRT_TYPE)) +
+p6 <- ggplot(data=transects, aes(x=PRCP, group=TRT_TYPE, fill=TRT_TYPE)) +
     geom_density(adjust=1.5, alpha=.4) +
     theme_minimal()
 p6
-
-p7 <- ggplot(data=transects, aes(x=VS, group=TRT_TYPE, fill=TRT_TYPE)) +
-    geom_density(adjust=1.5, alpha=.4) +
-    theme_minimal()
-p7
 
 #Fuels
 p8 <- ggplot(data=transects, aes(x=TCC, group=TRT_TYPE, fill=TRT_TYPE)) +
@@ -117,7 +113,7 @@ p8 <- ggplot(data=transects, aes(x=TCC, group=TRT_TYPE, fill=TRT_TYPE)) +
 p8
 
 #Response
-p12 <- ggplot(data=transects, aes(x=cbi, group=TRT_TYPE, fill=TRT_TYPE)) +
+p12 <- ggplot(data=transects, aes(x=rdnbr, group=TRT_TYPE, fill=TRT_TYPE)) +
     geom_density(adjust=1.5, alpha=.4) +
     theme_minimal()
 p12
@@ -132,10 +128,9 @@ p13
 
 ```{r}
 ## Point Density of Plot Characteristics by Treatment Type
-vars_to_plot <- c("northness", "eastness", "elevation", "slope", "TMax", "PR", 
-                  "VS", "VPD", "ERC", "TOTAL_COUNT", "prop_Thinning", 
+vars_to_plot <- c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TOTAL_COUNT", "prop_Rearrangement", 
                   "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", 
-                  "prop_extent_treated", "TCC", "mean_cbi")
+                  "prop_extent_treated", "TCC", "mean_rdnbr")
 
 plot_list <- map(vars_to_plot, ~{
   ggplot(data = plots, aes(x = .data[[.x]])) +
