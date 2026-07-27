@@ -2,11 +2,15 @@
 title: "6--Regression-Models"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
-output: pdf_document
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4, tidy = TRUE)
 ```
 
 ## Setup
@@ -20,8 +24,11 @@ library(glmmTMB)
 library(DHARMa)
 library(ggeffects)
 library(brms)
+library(here)
 
-transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
+
+transects <- filter(transects,!Incid_Name %in% c("TRAIL SPRINGS", "JUNKINS"))
 transects$TCC <- as.numeric(transects$TCC)
 transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
 transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Rearrangement", "Removal", "Broadcast Burn", "Wildfire"))
@@ -44,103 +51,31 @@ plot(transects$cbi, transects$rdnbr)
 transects$rdnbr_pos <- ifelse(transects$rdnbr > 0, transects$rdnbr, NA)
 hist(transects$rdnbr_pos)
 hist(log(transects$rdnbr_pos))
-
-ggplot(transects, aes(x = rdnbr_pos)) +
-  geom_histogram(bins = 15, fill = "grey80", color = "black") +
-  facet_wrap(~ TRT_TYPE, scales = "free_y") +  # free_y since group sizes likely differ
-  labs(title = "RdNBR by Treatment Type",
-       x = "rdnbr_pos", y = "Frequency") +
-  theme_minimal()
-
-ggplot(transects, aes(x = rdnbr_pos)) +
-  geom_histogram(bins = 15, fill = "grey80", color = "black") +
-  facet_wrap(~ Incid_Name, scales = "free_y") +
-  theme_minimal()
 ```
 
-## Look at shape of relationship between each predictor and cbi
+## Look at shape of relationship between each predictor and RdNBR
 
 ```{r}
-ggplot(transects, aes(x = TRT_TYPE, y = cbi)) +
+ggplot(transects, aes(x = TRT_TYPE, y = rdnbr)) +
   geom_boxplot()
 
-ggplot(transects, aes(x = COUNT, y = cbi)) +
+ggplot(transects, aes(x = COUNT, y = rdnbr)) +
   geom_point()
 
-ggplot(transects, aes(x = AGE, y = cbi)) +
+ggplot(transects, aes(x = AGE, y = rdnbr)) +
   geom_point()
 
 
-ggplot(transects, aes(x = Point_ID, y = cbi, color = type, group = type)) +
+ggplot(transects, aes(x = Point_ID, y = rdnbr, color = type, group = type)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "loess", se = TRUE) +
   theme_minimal() +
-  labs(x = "Point ID", y = "CBI", color = "Type")
-
-ggplot(transects, aes(x = Point_ID, y = cbi, color = type, group = type)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "lm", se = TRUE) +
-  facet_wrap(~TRT_TYPE) +
-  theme_minimal() +
-  labs(x = "Point ID", y = "CBI", color = "Type")
+  labs(x = "Point ID", y = "rdnbr", color = "Type")
 ```
 
-## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics (type, age, number, and prev. burn severity), and an interaction between point distance and transect type
+## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics and an interaction between point distance and transect type
 
-- prev burn sev
-
-```{r}
-m1 <- lmer(cbi ~ TRT_TYPE + COUNT + AGE:TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
-
-summary(m1)
-vif(m1)
-```
-
-## Evaluating model assumptions
-
-Fitted vs residuals plot
-```{r}
-# Residual diagnostic plots for m1
-par(mfrow = c(1, 2))
-
-# Q-Q plot
-qqnorm(resid(m1), main = "Q-Q Plot of Residuals")
-qqline(resid(m1), col = "red")
-
-# Residuals vs Fitted
-plot(fitted(m1), resid(m1),
-     xlab = "Fitted Values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-
-par(mfrow = c(1, 1))
-```
-
-# Ordered Beta Regression
-
-https://www.cambridge.org/core/journals/political-analysis/article/ordered-beta-regression-a-parsimonious-wellfitting-model-for-continuous-data-with-lower-and-upper-bounds/89F4141DA16D4FC217809B5EB45EEE83 
-
-Ordered beta allows for exact 0s and 1s
-
-```{r}
-transects$cbi_scaled <- transects$cbi/3
-
-m2 <- glmmTMB(cbi_scaled ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), family = ordbeta, data = transects)
-
-sim_beta <- simulateResiduals(m2)
-plot(sim_beta)
-```
-
-
-```{r}
-# Check residual patterns against key predictors directly
-plotResiduals(sim_beta, form = transects$TRT_TYPE)
-plotResiduals(sim_beta, form = transects$type)
-plotResiduals(sim_beta, form = transects$COUNT)
-```
-
-## Try a model with rdnbr
+- currently not including age or prev burn sev
 
 ```{r}
 m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
@@ -174,36 +109,16 @@ par(mfrow = c(1, 1))
 
 Or dispersion formula?
 ```{r}
-m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+m3 <- glmmTMB(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, dispformula = ~Event_ID, REML = TRUE)
 
 summary(m3)
-vif(m3)
 
 library(DHARMa)
 sim <- simulateResiduals(m3)
+plot(sim)
 plotResiduals(sim, form = transects$TRT_TYPE)
 plotResiduals(sim, form = transects$Event_ID)
-```
-
-## Evaluating model assumptions
-
-Fitted vs residuals plot
-```{r}
-# Residual diagnostic plots for m1
-par(mfrow = c(1, 2))
-
-# Q-Q plot
-qqnorm(resid(m3), main = "Q-Q Plot of Residuals")
-qqline(resid(m3), col = "red")
-
-# Residuals vs Fitted
-plot(fitted(m3), resid(m3),
-     xlab = "Fitted Values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-
-par(mfrow = c(1, 1))
+testQuantiles(sim)
 ```
 
 ## Try a model with only positive rdnbr
@@ -250,5 +165,46 @@ m4_gamma <- glmmTMB(
 )
 
 simulateResiduals(m4_gamma) |> plot()
+```
+
+# Create a model with only Cameron Peak
+
+```{r}
+df_cam <- filter(transects, Incid_Name == "CAMERON PEAK")
+
+m5 <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = df_cam, REML = TRUE)
+
+summary(m5)
+vif(m5)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(m5), main = "Q-Q Plot of Residuals")
+qqline(resid(m5), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(m5), resid(m5),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Only Cameron Peak + Dispersion argument
+
+```{r}
+m3 <- glmmTMB(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Transect_ID), data = df_cam, dispformula = ~TRT_TYPE, REML = TRUE)
+
+summary(m3)
+
+library(DHARMa)
+sim <- simulateResiduals(m3)
+plot(sim)
+plotResiduals(sim, form = transects$TRT_TYPE)
+testQuantiles(sim)
 ```
 
