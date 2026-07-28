@@ -41,11 +41,11 @@ CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
 
 allplots <- st_read("data/processed/fuels_analysis.gpkg",
   layer = "all_buffers_selected") %>%
-  filter(Incid_Name != c("ALKALI", "IRON", "TRAIL SPRINGS"))
+  filter(!Incid_Name %in% c("ALKALI", "IRON", "TRAIL SPRINGS", "JUNKINS"))
 
 transects <- st_read("data/processed/fuels_analysis.gpkg",
   layer = "transects_selected") %>%
-  filter(Incid_Name != c("ALKALI", "IRON", "TRAIL SPRINGS")) #removed, too few 4 kriging, not forested, and too few plots
+  filter(!Incid_Name %in% c("ALKALI", "IRON", "TRAIL SPRINGS", "JUNKINS")) #removed, too few 4 kriging, not forested, and too few plots
 
 
 # Change this path to a folder in hard drive

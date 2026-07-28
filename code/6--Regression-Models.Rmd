@@ -43,14 +43,22 @@ transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
 ## Response Variable Distribution
 
 ```{r}
-hist(transects$cbi)
-hist(transects$rdnbr)
+hist(transects$cbi, breaks = 30)
+hist(transects$rdnbr, breaks = 30)
 plot(transects$cbi, transects$rdnbr)
 
 #Going to remove negatives and 0s from rdnbr to play around with it
 transects$rdnbr_pos <- ifelse(transects$rdnbr > 0, transects$rdnbr, NA)
 hist(transects$rdnbr_pos)
 hist(log(transects$rdnbr_pos))
+
+ggplot(transects, aes(x = rdnbr, groups = Incid_Name)) +
+  facet_wrap(~Incid_Name, scales="free_y") +
+  geom_histogram()
+
+ggplot(transects, aes(x = cbi, groups = Incid_Name)) +
+  facet_wrap(~Incid_Name, scales="free_y") +
+  geom_histogram()
 ```
 
 ## Look at shape of relationship between each predictor and RdNBR
@@ -65,12 +73,39 @@ ggplot(transects, aes(x = COUNT, y = rdnbr)) +
 ggplot(transects, aes(x = AGE, y = rdnbr)) +
   geom_point()
 
+ggplot(transects, aes(x = elevation, y = rdnbr)) +
+  geom_point() +
+  geom_smooth(method="loess")
+
+ggplot(transects, aes(x = elevation, y = cbi)) +
+  geom_point()+
+  geom_smooth(method="loess")
+
+ggplot(transects, aes(x = TCC, y = rdnbr)) +
+  geom_point() +
+  geom_smooth(method="loess")
+
+ggplot(transects, aes(x = slope, y = rdnbr)) +
+  geom_point() +
+  geom_smooth(method="loess")
+
+ggplot(transects, aes(x = northness, y = rdnbr)) +
+  geom_point() +
+  geom_smooth(method="loess")
+
 
 ggplot(transects, aes(x = Point_ID, y = rdnbr, color = type, group = type)) +
   geom_point(alpha = 0.3) +
   geom_smooth(method = "loess", se = TRUE) +
   theme_minimal() +
   labs(x = "Point ID", y = "rdnbr", color = "Type")
+
+library(tidyverse)
+
+# Check categorical drivers (e.g., Treatment Status or Cover Type)
+ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
+  geom_density(alpha = 0.5) +
+  theme_bw()
 ```
 
 ## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics and an interaction between point distance and transect type
@@ -105,19 +140,22 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-## Try a model with rdnbr and weighted least squares
+## RdNBR + Dispersion Formula
 
-Or dispersion formula?
 ```{r}
-m3 <- glmmTMB(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, dispformula = ~Event_ID, REML = TRUE)
+transects <- transects %>%
+  arrange(Transect_ID, Point_ID) %>%
+  mutate(Point_Factor = factor(Point_ID))
+
+m3 <- glmmTMB(rdnbr ~ TRT_TYPE + EVT_Group + Point_ID*type + (1|Incid_Name/Transect_ID), data = transects, dispformula = ~Incid_Name, REML = TRUE)
 
 summary(m3)
 
 library(DHARMa)
-sim <- simulateResiduals(m3)
+sim <- simulateResiduals(m3) 
 plot(sim)
 plotResiduals(sim, form = transects$TRT_TYPE)
-plotResiduals(sim, form = transects$Event_ID)
+plotResiduals(sim, form = transects$Incid_Name)
 testQuantiles(sim)
 ```
 
@@ -194,17 +232,76 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Only Cameron Peak + Dispersion argument
+# Cameron Peak + Dispersion argument
 
 ```{r}
-m3 <- glmmTMB(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Transect_ID), data = df_cam, dispformula = ~TRT_TYPE, REML = TRUE)
+m6 <- glmmTMB(rdnbr ~ TRT_TYPE + EVT_Group + Point_ID*type + (1|Transect_ID), data = df_cam, dispformula = ~TRT_TYPE, REML = TRUE)
 
-summary(m3)
+summary(m6)
 
 library(DHARMa)
-sim <- simulateResiduals(m3)
+sim <- simulateResiduals(m6)
+plot(sim)
+plotResiduals(sim, form = df_cam$TRT_TYPE)
+testQuantiles(sim)
+```
+
+## Zero-Inflated Beta Regression
+
+Transform CBI to be with 0-1 exclusive boundaries using Smithson & Verkuilen (2006) transformation. Using a zero inflated formula because 0s account for about 6% of my data while 3s are negligible (0.23%)
+```{r}
+transects <- transects %>%
+  mutate(cbi_01 = cbi / 3,
+         cbi_squeezed = case_when(
+           cbi_01 == 1 ~ 1 - (0.5 / n()),   # nudge exact 3s just below 1
+           TRUE ~ cbi_01                      # leave 0s and interior values as-is
+         ))
+
+m7 <- glmmTMB(cbi_squeezed ~ TRT_TYPE + Point_ID*type + (1|Incid_Name/Transect_ID),
+                  data = transects,
+                  family = beta_family(),
+                  ziformula = ~ Incid_Name,
+                  REML = TRUE)
+
+sim <- simulateResiduals(m7)
 plot(sim)
 plotResiduals(sim, form = transects$TRT_TYPE)
 testQuantiles(sim)
+```
+
+# Gemini - Zero-Inflated Beta and Ordered Beta via BRMS
+
+```{r}
+# Option A: Zero-Inflated Beta (requires squeezing ONLY if values equal exactly 1)
+# Smithson & Verkuilen squeeze on non-zero values, OR handle 0s natively in ziformula:
+
+transects <- transects %>%
+  mutate(
+    # Standard 0-1 scaling for CBI (range 0 to 3)
+    cbi_prop = cbi / 3,
+    # Squeeze ONLY values == 1 down to 0.9999 so beta family can evaluate the interior
+    cbi_zi = ifelse(cbi_prop == 1, 0.9999, cbi_prop)
+  )
+
+m7_zi <- glmmTMB(
+  cbi_zi ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
+  data = transects,
+  family = beta_family(link = "logit"), # Zero-inflated beta
+  ziformula = ~ 1 # Models probability of exact 0 (unburned)
+)
+
+sim <- simulateResiduals(m7_zi)
+plot(sim)
+plotResiduals(sim, form = transects$TRT_TYPE)
+testQuantiles(sim)
+
+# Option B: Ordered Beta via brms (Handles exact 0s AND 3s natively without squeezing!)
+library(ordbetareg)
+library(brms)
+m7_ordbeta <- ordbetareg(
+  cbi_prop ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
+  data = transects,
+  chains = 4, cores = 4
+)
 ```
 
