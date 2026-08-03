@@ -1,0 +1,137 @@
+---
+title: "Weekly Check-In 8-3"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4, tidy = TRUE)
+```
+
+## Setup
+
+```{r}
+library(tidyverse)
+library(sf)
+library(lme4)
+library(car)
+library(glmmTMB)
+library(DHARMa)
+library(ggeffects)
+library(brms)
+library(here)
+library(patchwork)  # for side-by-side layout of ggplot
+
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
+
+transects <- filter(transects,!Incid_Name %in% c("TRAIL SPRINGS", "JUNKINS"))
+transects$TCC <- as.numeric(transects$TCC)
+transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
+transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Rearrangement", "Removal", "Broadcast Burn", "Wildfire"))
+transects$type <- factor(transects$type, levels = c("control", "entering", "exiting"))
+
+#Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
+transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
+transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
+transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
+```
+
+# Cameron Peak Only Model
+
+
+```{r}
+df_cam <- filter(transects, Incid_Name == "CAMERON PEAK")
+
+m5 <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = df_cam, REML = TRUE)
+
+summary(m5)
+vif(m5)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(m5), main = "Q-Q Plot of Residuals")
+qqline(resid(m5), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(m5), resid(m5),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Cameron Peak + Dispersion argument
+
+```{r}
+m6 <- glmmTMB(rdnbr ~ TRT_TYPE + EVT_Group + Point_ID*type + (1|Transect_ID), data = df_cam, dispformula = ~TRT_TYPE, REML = TRUE)
+
+summary(m6)
+
+sim <- simulateResiduals(m6)
+plot(sim)
+plotResiduals(sim, form = df_cam$TRT_TYPE)
+testQuantiles(sim)
+```
+
+# Full Model with Color-Coded Residuals Plots
+
+```{r, fig.width = 8}
+m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Incid_Name/Transect_ID), data = transects, REML = TRUE)
+
+summary(m3)
+
+diag_df <- data.frame(
+  resid = resid(m3),
+  fitted = fitted(m3),
+  Incid_Name = as.factor(model.frame(m3)$Incid_Name)
+)
+
+p1 <- ggplot(diag_df, aes(sample = resid, color = Incid_Name)) +
+  stat_qq() +
+  stat_qq_line(color = "black") +
+  labs(title = "Q-Q Plot of Residuals") +
+  theme_minimal()
+
+p2 <- ggplot(diag_df, aes(x = fitted, y = resid, color = Incid_Name)) +
+  geom_point() +
+  geom_hline(yintercept = 0, color = "red", linetype = "dashed") +
+  labs(x = "Fitted Values", y = "Residuals", title = "Residuals vs Fitted") +
+  theme_minimal()
+
+p1 + p2 + plot_layout(guides = "collect")
+```
+
+## RdNBR + Dispersion Formula
+
+```{r, fig.width = 8}
+m4 <- glmmTMB(rdnbr ~ TRT_TYPE + EVT_Group + Point_ID*type + (1|Incid_Name/Transect_ID), data = transects, dispformula = ~Incid_Name, REML = TRUE)
+
+summary(m4)
+
+sim <- simulateResiduals(m4) 
+
+diag_df <- data.frame(
+  resid = residuals(sim),                    # DHARMa scaled residuals
+  pred  = sim$fittedPredictedResponse,
+  Incid_Name = as.factor(transects$Incid_Name)  # must match row order used in sim
+)
+
+p1 <- ggplot(diag_df, aes(sample = resid, color = Incid_Name)) +
+  stat_qq(distribution = qunif) +
+  geom_abline(slope = 1, intercept = 0, color = "black") +
+  labs(title = "DHARMa Q-Q (scaled residuals)") +
+  theme_minimal()
+
+p2 <- ggplot(diag_df, aes(x = pred, y = resid, color = Incid_Name)) +
+  geom_point() +
+  geom_hline(yintercept = 0.5, color = "red", linetype = "dashed") +
+  labs(x = "Predicted", y = "Scaled residuals", title = "Residual vs Predicted") +
+  theme_minimal()
+
+p1 + p2 + plot_layout(guides = "collect")
+```

@@ -100,9 +100,6 @@ ggplot(transects, aes(x = Point_ID, y = rdnbr, color = type, group = type)) +
   theme_minimal() +
   labs(x = "Point ID", y = "rdnbr", color = "Type")
 
-library(tidyverse)
-
-# Check categorical drivers (e.g., Treatment Status or Cover Type)
 ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
   geom_density(alpha = 0.5) +
   theme_bw()
@@ -157,52 +154,6 @@ plot(sim)
 plotResiduals(sim, form = transects$TRT_TYPE)
 plotResiduals(sim, form = transects$Incid_Name)
 testQuantiles(sim)
-```
-
-## Try a model with only positive rdnbr
-
-```{r}
-m4 <- lmer(rdnbr_pos ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
-
-summary(m4)
-vif(m4)
-```
-
-## Evaluating model assumptions
-
-Fitted vs residuals plot
-```{r}
-# Residual diagnostic plots for m1
-par(mfrow = c(1, 2))
-
-# Q-Q plot
-qqnorm(resid(m4), main = "Q-Q Plot of Residuals")
-qqline(resid(m4), col = "red")
-
-# Residuals vs Fitted
-plot(fitted(m4), resid(m4),
-     xlab = "Fitted Values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-
-par(mfrow = c(1, 1))
-```
-
-# Try a Gamma family
-
-Used to model a response distribution that is positive, right skewed, and continuous
-
-```{r}
-library(glmmTMB)
-
-m4_gamma <- glmmTMB(
-  rdnbr_pos ~ TRT_TYPE + COUNT + Point_ID * type + (1 | Event_ID/Transect_ID),
-  data = transects,
-  family = Gamma(link = "log")
-)
-
-simulateResiduals(m4_gamma) |> plot()
 ```
 
 # Create a model with only Cameron Peak
@@ -269,7 +220,7 @@ plotResiduals(sim, form = transects$TRT_TYPE)
 testQuantiles(sim)
 ```
 
-# Gemini - Zero-Inflated Beta and Ordered Beta via BRMS
+# Zero-Inflated Beta and Ordered Beta via BRMS
 
 ```{r}
 # Option A: Zero-Inflated Beta (requires squeezing ONLY if values equal exactly 1)
@@ -298,10 +249,60 @@ testQuantiles(sim)
 # Option B: Ordered Beta via brms (Handles exact 0s AND 3s natively without squeezing!)
 library(ordbetareg)
 library(brms)
+
 m7_ordbeta <- ordbetareg(
-  cbi_prop ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
+  formula = cbi_prop ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
   data = transects,
-  chains = 4, cores = 4
+  chains = 4, 
+  cores = 4,
+  iter = 2000
 )
+
+library(bayesplot)
+
+# 1A. Density Overlay: Checks overall distribution shape & boundary peaks
+pp_check(m7_ordbeta, type = "dens_overlay", ndraws = 50)
+
+# 1B. Histograms: Compare actual data distribution to 8 simulated replicates
+pp_check(m7_ordbeta, type = "hist", ndraws = 8)
+
+# 1C. Check performance across groups (e.g., Treatment Types)
+pp_check(m7_ordbeta, type = "stat_grouped", group = "TRT_TYPE", stat = "mean")
+
+# Generate simulated response matrix from the posterior draws
+preds <- posterior_predict(m7_ordbeta, ndraws = 250)
+
+# Calculate DHARMa residuals
+dharma_res <- createDHARMa(
+  simulatedResponse = t(preds),
+  observedResponse = transects$cbi_prop,
+  fittedPredictedResponse = apply(preds, 2, median),
+  integerResponse = FALSE
+)
+
+# Plot standard DHARMa diagnostic plots
+plot(dharma_res)
+```
+
+# Ordered beta Regression with Dispersion Formula
+
+```{r}
+# 1. Define formula predicting both mean and phi
+f_m8 <- bf(
+  cbi_prop ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
+  phi ~ TRT_TYPE
+)
+
+# 2. Fit with phi_reg specified so ordbetareg sets the correct phi priors
+m8_ordbeta <- ordbetareg(
+  formula = f_m8,
+  data = transects,
+  phi_reg = "both",  # Tells ordbetareg to expect a regression model for phi
+  chains = 4, 
+  cores = 4,
+  iter = 2000,
+  control = list(adapt_delta = 0.95)
+)
+
 ```
 

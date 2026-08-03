@@ -106,7 +106,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,   
+  prop_high_sev ~ northness + eastness + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,   
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -158,9 +158,6 @@ if(!dir.exists(output_dir)) {
 # 4. Loop through each variable, generate the PDP, and save it
 for (var_name in predictors) {
   
-  # Print progress to console
-  cat("Generating and saving plot for:", var_name, "\n")
-  
   # Compute partial dependence using the clean data frame
   pdp_data <- partial(
     high_model, 
@@ -193,13 +190,9 @@ for (var_name in predictors) {
     dpi = 300
   )
 }
-
-cat("\nAll plots have been saved successfully to the '", output_dir, "' directory!\n", sep="")
 ```
 
 # Random Forest - Prop mod-high severity
-
-- 7/9 removing proportion extent treated for now
 
 ```{r}
 # Prepare and split data (80% Train, 20% Test)
@@ -210,7 +203,7 @@ test_data  <- plots[-index, ]
 
 # Fit the model 
 mohi_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + TOTAL_COUNT + prop_extent_treated + TCC,          # Formula: target ~ predictors
+  prop_mod_high_sev ~ northness + eastness + slope + TMAX + PRCP + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,          # Formula: target ~ predictors
   data = train_data,    # Training dataset
   ntree = 500,          # Total decision trees grown
   mtry = 2,             # Features split per node
@@ -262,9 +255,6 @@ if(!dir.exists(output_dir)) {
 # 4. Loop through each variable, generate the PDP, and save it
 for (var_name in predictors) {
   
-  # Print progress to console
-  cat("Generating and saving plot for:", var_name, "\n")
-  
   # Compute partial dependence using the clean data frame
   pdp_data <- partial(
     mohi_model, 
@@ -297,43 +287,5 @@ for (var_name in predictors) {
     dpi = 300
   )
 }
-
-cat("\nAll plots have been saved successfully to the '", output_dir, "' directory!\n", sep="")
 ```
 
-# Random Forest - Prop high severity
-
-```{r}
-# Prepare and split data (80% Train, 20% Test)
-set.seed(123) # Ensures identical bootstrap results
-index <- sample(1:nrow(plots), 0.8 * nrow(plots))
-train_data <- plots[index, ]
-test_data  <- plots[-index, ]
-
-# Fit the model 
-high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,   
-  data = train_data,    # Training dataset
-  ntree = 500,          # Total decision trees grown
-  mtry = 2,             # Features split per node
-  importance = TRUE     # Evaluates feature impact
-)
-
-# Print out-of-bag (OOB) error summary
-print(high_model)
-
-# Generate predictions on test data
-predictions <- predict(high_model, newdata = test_data)
-
-# Calculate Regression Evaluation Metrics
-actuals <- test_data$prop_high_sev
-
-# 1. Root Mean Squared Error (Average prediction error size)
-rmse <- sqrt(mean((actuals - predictions)^2))
-cat("Test RMSE:", round(rmse, 4), "\n")
-
-# 2. R-squared on Test Data (Proportion of variance explained)
-r2 <- 1 - (sum((actuals - predictions)^2) / sum((actuals - mean(actuals))^2))
-cat("Test R-squared:", round(r2, 4), "\n")
-
-```
