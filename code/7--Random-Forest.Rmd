@@ -289,3 +289,66 @@ for (var_name in predictors) {
 }
 ```
 
+# Try tidymodels format
+
+```{r}
+library("glmnet")
+library("randomForest")
+library("ranger")
+library("tidymodels")
+
+set.seed(4595)
+data_split <- initial_split(plots, strata = "prop_high_sev", prop = 0.75)
+
+hi_train <- training(data_split)
+hi_test  <- testing(data_split)
+
+data_split2 <- initial_split(plots, strata = "prop_mod_high_sev", prop = 0.75)
+
+mohi_train <- training(data_split2)
+mohi_test  <- testing(data_split2)
+```
+
+## High-severity model
+
+```{r}
+rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 1000)
+rf_defaults
+```
+
+```{r}
+preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Event_ID")
+
+rf_xy_fit <- 
+  rf_defaults |>
+  set_engine("ranger") |>
+  fit_xy(
+    x = hi_train[, preds],
+    y = hi_train$prop_high_sev
+  )
+
+rf_xy_fit
+```
+
+```{r}
+test_results <- 
+  hi_test |>
+  select(prop_high_sev) |>
+  bind_cols(
+    predict(rf_xy_fit, new_data = hi_test[, preds])
+  )
+test_results |> slice(1:5)
+
+# summarize performance
+test_results |> metrics(truth = prop_high_sev, estimate = .pred) 
+```
+
+```{r}
+rand_forest(mode = "regression", mtry = .preds(), trees = 1000) |>
+  set_engine("randomForest") |>
+  fit(
+    prop_high_sev ~ northness + eastness + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,
+    data = hi_train
+  )
+```
+
