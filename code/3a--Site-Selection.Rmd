@@ -532,7 +532,7 @@ balanced_transects <- thinned_transects %>%
   group_by(Event_ID) %>%
   group_modify(~ {
     # Count how many treatment transects exist in this specific fire
-    n_treated <- sum(.x$treatment == TRUE)
+    n_treated <- round(sum(.x$treatment == TRUE)/2)
     
     # Separate the treated and control groups for this fire
     treated_rows <- .x %>% filter(treatment == TRUE)
