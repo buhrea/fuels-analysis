@@ -218,50 +218,48 @@ st_write(
 ## Summary Statistics
 
 ```{r treatment-extent}
-#Collapse treatment dataset
-treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
-  st_make_valid() %>%
-  st_transform(target_crs) %>%
-  filter(ACTIVITY != "Plant Trees")
-flat <- st_union(treatments)
+# #Collapse treatment dataset
+# treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
+#   st_make_valid() %>%
+#   st_transform(target_crs) %>%
+#   filter(ACTIVITY != "Plant Trees")
+# flat <- st_union(treatments)
+# 
+# # Calculate the total area of each circle plot
+# all_buffers <- all_buffers %>%
+#   mutate(total_plot_area = st_area(.))
+# 
+# # Intersect plots with treatments
+# intersections <- st_intersection(all_buffers, flat)
+# 
+# # Sum treated area per plot
+# treated_proportions <- intersections %>%
+#   mutate(treated_area = st_area(.)) %>%
+#   st_drop_geometry() %>%
+#   # Adding total_plot_area to the group_by preserves it
+#   group_by(unique_id, total_plot_area) %>% 
+#   summarise(total_treated_area = sum(treated_area), .groups = "drop") %>%
+#   # Now total_plot_area exists for this calculation
+#   mutate(prop_treated = as.numeric(total_treated_area / total_plot_area))
+# 
+# # Join back to the original buffers to include 0s
+# # (Plots with no treatment overlap are dropped in st_intersection)
+# final_analysis <- all_buffers %>%
+#   st_drop_geometry() %>%
+#   left_join(treated_proportions) %>%
+#   mutate(prop_treated = replace_na(prop_treated, 0))
 
-# Calculate the total area of each circle plot
-all_buffers <- all_buffers %>%
-  mutate(total_plot_area = st_area(.))
-
-# Intersect plots with treatments
-intersections <- st_intersection(all_buffers, flat)
-
-# Sum treated area per plot
-treated_proportions <- intersections %>%
-  mutate(treated_area = st_area(.)) %>%
-  st_drop_geometry() %>%
-  # Adding total_plot_area to the group_by preserves it
-  group_by(unique_id, total_plot_area) %>% 
-  summarise(total_treated_area = sum(treated_area), .groups = "drop") %>%
-  # Now total_plot_area exists for this calculation
-  mutate(prop_treated = as.numeric(total_treated_area / total_plot_area))
-
-# Join back to the original buffers to include 0s
-# (Plots with no treatment overlap are dropped in st_intersection)
-final_analysis <- all_buffers %>%
-  st_drop_geometry() %>%
-  left_join(treated_proportions) %>%
-  mutate(prop_treated = replace_na(prop_treated, 0))
-```
-
-```{r treatment-extent-histogram}
-ggplot(final_analysis, aes(x = prop_treated)) +
-  geom_histogram(bins = 20) +
-  # Create a separate panel for each radius
-  facet_wrap(~buffer_radius, labeller = label_both) + 
-  theme_bw() +
-  labs(
-    title = "Distribution of Treatment Proportion by Buffer Size",
-    x = "Proportion of Area Treated",
-    y = "Number of Plots"
-  ) +
-  scale_x_continuous(labels = scales::percent)
+# ggplot(final_analysis, aes(x = prop_treated)) +
+#   geom_histogram(bins = 20) +
+#   # Create a separate panel for each radius
+#   facet_wrap(~buffer_radius, labeller = label_both) + 
+#   theme_bw() +
+#   labs(
+#     title = "Distribution of Treatment Proportion by Buffer Size",
+#     x = "Proportion of Area Treated",
+#     y = "Number of Plots"
+#   ) +
+#   scale_x_continuous(labels = scales::percent)
 ```
 
 
@@ -393,6 +391,10 @@ points <- points %>%
 
 points <- st_transform(points, target_crs)
 
+treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
+  st_make_valid() %>%
+  st_transform(target_crs)
+flat <- st_union(treatments)
 
 #label treated points
 spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
