@@ -312,7 +312,7 @@ mohi_test  <- testing(data_split2)
 ## High-severity model
 
 ```{r}
-rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 1000)
+rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 2000)
 rf_defaults
 ```
 
@@ -343,12 +343,36 @@ test_results |> slice(1:5)
 test_results |> metrics(truth = prop_high_sev, estimate = .pred) 
 ```
 
+## Moderate to High-severity model
+
 ```{r}
-rand_forest(mode = "regression", mtry = .preds(), trees = 1000) |>
-  set_engine("randomForest") |>
-  fit(
-    prop_high_sev ~ northness + eastness + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,
-    data = hi_train
-  )
+rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 2000, min_n = 20)
+rf_defaults
 ```
 
+```{r}
+preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Event_ID")
+
+rf_xy_fit <- 
+  rf_defaults |>
+  set_engine("ranger") |>
+  fit_xy(
+    x = mohi_train[, preds],
+    y = mohi_train$prop_mod_high_sev
+  )
+
+rf_xy_fit
+```
+
+```{r}
+test_results <- 
+  hi_test |>
+  select(prop_mod_high_sev) |>
+  bind_cols(
+    predict(rf_xy_fit, new_data = mohi_test[, preds])
+  )
+test_results |> slice(1:5)
+
+# summarize performance
+test_results |> metrics(truth = prop_mod_high_sev, estimate = .pred) 
+```

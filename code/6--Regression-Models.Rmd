@@ -59,16 +59,9 @@ mutate(
 ```{r}
 hist(transects$cbi, breaks = 30)
 hist(transects$rdnbr, breaks = 30)
-plot(transects$cbi, transects$rdnbr)
-
-
-#Going to remove negatives and 0s from rdnbr to play around with it
-transects$rdnbr_pos <- ifelse(transects$rdnbr > 0, transects$rdnbr, NA)
-hist(transects$rdnbr_pos)
-hist(log(transects$rdnbr_pos))
 
 ggplot(transects, aes(x = rdnbr, groups = Incid_Name)) +
-  facet_wrap(~Incid_Name, scales="free_y") +
+  facet_wrap(~Incid_Name) +
   geom_histogram()
 
 ggplot(transects, aes(x = cbi, groups = Incid_Name)) +
@@ -89,13 +82,37 @@ ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
   geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
   facet_wrap(~EVT_Group, ncol = 2) +
   theme_bw() +
-  theme(legend.position = "none")  
+  theme(legend.position = "none")
+
+ggplot(transects, aes(x = rdnbr, fill = TRT_TYPE)) +
+  geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
+  theme_bw()
+
+ggplot(transects, aes(x = rdnbr, fill = type)) +
+  geom_density(aes(y = after_stat(count/sum(count))), alpha = 0.5) +
+  theme_bw()
+
+ggplot(transects, aes(x = rdnbr, fill = Incid_Name)) +
+  geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
+  facet_wrap(~Incid_Name, ncol = 4) +
+  theme_bw() +
+  theme(legend.position = "none")
+
+ggplot(transects, aes(x = rdnbr, fill = extreme_area)) +
+  geom_density(alpha = 0.5) +
+  theme_bw() #not scaled for sample size, getting error
 ```
 
 ## Look at shape of relationship between each predictor and RdNBR
 
 ```{r}
 ggplot(transects, aes(x = TRT_TYPE, y = rdnbr)) +
+  geom_boxplot()
+
+ggplot(transects, aes(x = extreme_area, y = rdnbr)) +
+  geom_boxplot()
+
+ggplot(transects, aes(x = EVT_Group, y = rdnbr)) +
   geom_boxplot()
 
 ggplot(transects, aes(x = COUNT, y = rdnbr)) +
@@ -627,3 +644,5 @@ abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1))
 ```
+
+# Random forest model to determine what is driving a bimodal distribution...
