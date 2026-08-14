@@ -38,6 +38,20 @@ transects$type <- factor(transects$type, levels = c("control", "entering", "exit
 transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
 transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
 transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
+
+#Sort start of transects into L/M/H based on average severity of first 5 points
+transects <- transects %>%
+  group_by(Transect_ID) %>% 
+mutate(
+    start_value = mean(rdnbr[Point_ID %in% 1:5], na.rm = TRUE),
+    START_SEV = case_when(
+      start_value < 300              ~ "Low",
+      start_value >= 300 & start_value <= 500 ~ "Moderate",
+      start_value > 500              ~ "High",
+    )
+  ) %>%
+  ungroup() %>%
+  select(-start_value)
 ```
 
 ## Response Variable Distribution
@@ -46,6 +60,7 @@ transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
 hist(transects$cbi, breaks = 30)
 hist(transects$rdnbr, breaks = 30)
 plot(transects$cbi, transects$rdnbr)
+
 
 #Going to remove negatives and 0s from rdnbr to play around with it
 transects$rdnbr_pos <- ifelse(transects$rdnbr > 0, transects$rdnbr, NA)
@@ -59,6 +74,22 @@ ggplot(transects, aes(x = rdnbr, groups = Incid_Name)) +
 ggplot(transects, aes(x = cbi, groups = Incid_Name)) +
   facet_wrap(~Incid_Name, scales="free_y") +
   geom_histogram()
+
+# View distribution of response faceted by starting severity
+ggplot(transects, aes(x = rdnbr, fill = START_SEV)) +
+  geom_density(alpha = 0.5) +
+  theme_bw()
+
+ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
+  geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.5) + #add after_stat to scale each group based on sample size (area under curve = 1 across all groups, not for each individual group)
+  theme_bw()
+
+#Facetted by EVT for easier viewing
+ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
+  geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
+  facet_wrap(~EVT_Group, ncol = 2) +
+  theme_bw() +
+  theme(legend.position = "none")  
 ```
 
 ## Look at shape of relationship between each predictor and RdNBR
@@ -92,17 +123,6 @@ ggplot(transects, aes(x = slope, y = rdnbr)) +
 ggplot(transects, aes(x = northness, y = rdnbr)) +
   geom_point() +
   geom_smooth(method="loess")
-
-
-ggplot(transects, aes(x = Point_ID, y = rdnbr, color = type, group = type)) +
-  geom_point(alpha = 0.3) +
-  geom_smooth(method = "loess", se = TRUE) +
-  theme_minimal() +
-  labs(x = "Point ID", y = "rdnbr", color = "Type")
-
-ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
-  geom_density(alpha = 0.5) +
-  theme_bw()
 ```
 
 ## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics and an interaction between point distance and transect type
@@ -110,7 +130,7 @@ ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
 - currently not including age or prev burn sev
 
 ```{r}
-m3 <- lmer(rdnbr ~ TRT_TYPE + COUNT + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+m3 <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
 
 summary(m3)
 vif(m3)
@@ -140,11 +160,7 @@ par(mfrow = c(1, 1))
 ## RdNBR + Dispersion Formula
 
 ```{r}
-transects <- transects %>%
-  arrange(Transect_ID, Point_ID) %>%
-  mutate(Point_Factor = factor(Point_ID))
-
-m3 <- glmmTMB(rdnbr ~ TRT_TYPE + EVT_Group + Point_ID*type + (1|Incid_Name/Transect_ID), data = transects, dispformula = ~Incid_Name, REML = TRUE)
+m3 <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Incid_Name/Transect_ID), data = transects, dispformula = ~Incid_Name, REML = TRUE)
 
 summary(m3)
 
@@ -304,5 +320,261 @@ m8_ordbeta <- ordbetareg(
   control = list(adapt_delta = 0.95)
 )
 
+```
+
+# L/M/H Models
+
+```{r}
+transects %>% 
+  st_drop_geometry() %>% 
+  group_by(Incid_Name) %>%
+  count(START_SEV) %>% 
+  tidyr::pivot_wider(
+    names_from = Incid_Name,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(n = Inf, width = Inf)
+
+low_df <- transects %>%
+  filter(START_SEV == "Low") #940 obs
+mod_df <- transects %>%
+  filter(START_SEV == "Moderate") #550 obs
+high_df <- transects %>%
+  filter(START_SEV == "High") #1860 obs
+
+summary(low_df$type)
+summary(mod_df$type)
+summary(high_df$type)
+
+low_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, TRT_TYPE) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  )
+mod_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, TRT_TYPE) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  )
+high_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, TRT_TYPE) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  )
+```
+
+# Low Starting Severity Model
+
+```{r}
+low_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = low_df, REML = TRUE)
+
+summary(low_fit)
+vif(low_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(low_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(low_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(low_fit), resid(low_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Moderate Starting Severity Model
+
+```{r}
+mod_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = mod_df, REML = TRUE)
+
+summary(mod_fit)
+vif(mod_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(mod_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(mod_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(mod_fit), resid(mod_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# High Starting Severity Model
+
+```{r}
+high_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = high_df, REML = TRUE)
+
+summary(high_fit)
+vif(high_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(high_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(high_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(high_fit), resid(high_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Entering + L/M/H Models
+
+```{r}
+low_enter_df <- low_df %>%
+  filter(type == "entering") #940 obs -> 410 obs
+mod_enter_df <- mod_df %>%
+  filter(type == "entering") #550 obs -> 240 obs
+high_enter_df <- high_df %>%
+  filter(type == "entering") #1860 obs -> 780 obs
+```
+
+# Entering + Low Starting Severity Model
+
+```{r}
+low_ent_fit <- lmer(rdnbr ~ TRT_TYPE + (1|Event_ID/Transect_ID), data = low_enter_df, REML = TRUE)
+
+summary(low_ent_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(low_ent_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(low_ent_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(low_ent_fit), resid(low_ent_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Entering + Moderate Starting Severity Model
+
+```{r}
+mod_ent_fit <- lmer(rdnbr ~ TRT_TYPE + (1|Event_ID/Transect_ID), data = mod_enter_df, REML = TRUE)
+
+summary(mod_ent_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(mod_ent_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(mod_ent_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(mod_ent_fit), resid(mod_ent_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Entering + High Starting Severity Model
+
+```{r}
+high_ent_fit <- lmer(rdnbr ~ TRT_TYPE + (1|Event_ID/Transect_ID), data = high_enter_df, REML = TRUE)
+
+summary(high_ent_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(high_ent_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(high_ent_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(high_ent_fit), resid(high_ent_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Forest Type Models
+
+```{r}
+pondo_df <- transects %>%
+  filter(EVT_Group == "ponderosa") %>% #857 obs
+  group_by(Transect_ID) %>%
+  filter(n() == 10) %>% #only use complete 10-point transects
+  ungroup() #170 observations
+
+mixed_df <- transects %>%
+  filter(EVT_Group == "mixed conifer") %>% #775 obs
+  group_by(Transect_ID) %>%
+  filter(n() == 10) %>% #only use complete 10-point transects
+  ungroup() #170 observations
+
+lodge_df <- transects %>%
+  filter(EVT_Group == "lodgepole") %>% #749 obs
+  group_by(Transect_ID) %>%
+  filter(n() == 10) %>% #only use complete 10-point transects
+  ungroup() #200 observations
+```
+
+# Low Starting Severity Model
+
+```{r}
+low_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = low_df, REML = TRUE)
+
+summary(low_fit)
+vif(low_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(low_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(low_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(low_fit), resid(low_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
 ```
 
