@@ -84,7 +84,7 @@ ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
   geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.5) + #add after_stat to scale each group based on sample size (area under curve = 1 across all groups, not for each individual group)
   theme_bw()
 
-#Facetted by EVT for easier viewing
+#Faceted by EVT for easier viewing
 ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
   geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
   facet_wrap(~EVT_Group, ncol = 2) +
@@ -553,23 +553,23 @@ lodge_df <- transects %>%
   ungroup() #200 observations
 ```
 
-# Low Starting Severity Model
+# Ponderosa Model
 
 ```{r}
-low_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = low_df, REML = TRUE)
+pondo_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = pondo_df, REML = TRUE)
 
-summary(low_fit)
-vif(low_fit)
+summary(pondo_fit)
+vif(pondo_fit)
 
 # Residual diagnostic plots for m1
 par(mfrow = c(1, 2))
 
 # Q-Q plot
-qqnorm(resid(low_fit), main = "Q-Q Plot of Residuals")
-qqline(resid(low_fit), col = "red")
+qqnorm(resid(pondo_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(pondo_fit), col = "red")
 
 # Residuals vs Fitted
-plot(fitted(low_fit), resid(low_fit),
+plot(fitted(pondo_fit), resid(pondo_fit),
      xlab = "Fitted Values",
      ylab = "Residuals",
      main = "Residuals vs Fitted")
@@ -578,3 +578,52 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
+# Mixed Conifer Model
+
+```{r}
+mixed_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = mixed_df, REML = TRUE)
+
+summary(mixed_fit)
+vif(mixed_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(mixed_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(mixed_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(mixed_fit), resid(mixed_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Lodgepole Model
+
+```{r}
+lodge_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = lodge_df, REML = TRUE) #Remove Event_ID in random effects because the only fire is Cameron Peak
+
+summary(lodge_fit)
+vif(lodge_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(lodge_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(lodge_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(lodge_fit), resid(lodge_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
