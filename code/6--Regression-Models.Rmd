@@ -52,6 +52,9 @@ mutate(
   ) %>%
   ungroup() %>%
   select(-start_value)
+
+#Drop geometry
+transects <- st_drop_geometry(transects)
 ```
 
 ## Response Variable Distribution
@@ -99,7 +102,7 @@ ggplot(transects, aes(x = rdnbr, fill = Incid_Name)) +
   theme(legend.position = "none")
 
 ggplot(transects, aes(x = rdnbr, fill = extreme_area)) +
-  geom_density(alpha = 0.5) +
+  geom_density(alpha = 0.7) +
   theme_bw() #not scaled for sample size, getting error
 ```
 
@@ -147,10 +150,21 @@ ggplot(transects, aes(x = northness, y = rdnbr)) +
 - currently not including age or prev burn sev
 
 ```{r}
-m3 <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+m3 <- lmer(rdnbr ~ TRT_TYPE + EVT_Group + extreme_area + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
 
 summary(m3)
 vif(m3)
+
+#Residuals actually look normally distributed
+hist(resid(m3), breaks = 40)
+# or
+plot(density(resid(m3)))
+
+#Check where outliers are clustered
+transects$resid_m3 <- resid(m3)
+transects[abs(transects$resid_m3) > 1000, c("Incid_Name", "TRT_TYPE", "EVT_Group", "extreme_area", "rdnbr", "resid_m3")]
+
+table(transects$extreme_area, transects$Incid_Name)
 ```
 
 ## Evaluating model assumptions
@@ -181,12 +195,48 @@ m3 <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Incid_Name/Transect_ID), dat
 
 summary(m3)
 
-library(DHARMa)
 sim <- simulateResiduals(m3) 
 plot(sim)
 plotResiduals(sim, form = transects$TRT_TYPE)
 plotResiduals(sim, form = transects$Incid_Name)
 testQuantiles(sim)
+testOutliers(sim)
+testDispersion(sim)
+
+library(DHARMa)
+library(dplyr)
+library(ggplot2)
+
+# Extract residuals and attach fire ID (and other grouping vars)
+res <- simulateResiduals(m3, plot = FALSE)
+resid_df <- transects %>%
+  mutate(dharma_resid = res$scaledResiduals)
+
+# 1. Flag the "spike" observations near the upper boundary
+resid_df <- resid_df %>%
+  mutate(near_one = dharma_resid > 0.9)
+
+# 2. Proportion of near-1 residuals by fire
+resid_df %>%
+  group_by(Incid_Name) %>%
+  summarise(
+    n = n(),
+    prop_near_one = mean(near_one),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(prop_near_one)) %>%
+  print(n = Inf)
+
+# 3. Visual: faceted histograms by fire
+ggplot(resid_df, aes(x = dharma_resid)) +
+  geom_histogram(bins = 30, boundary = 0) +
+  facet_wrap(~ Incid_Name, scales = "free_y") +
+  geom_vline(xintercept = 0.9, color = "red", linetype = "dashed") +
+  theme_minimal()
+
+# 4. If a few fires dominate the spike, check chi-square style enrichment
+tab <- table(resid_df$Incid_Name, resid_df$near_one)
+chisq.test(tab)  # will likely be significant with 13 fires + uneven spike
 ```
 
 # Create a model with only Cameron Peak
@@ -342,17 +392,6 @@ m8_ordbeta <- ordbetareg(
 # L/M/H Models
 
 ```{r}
-transects %>% 
-  st_drop_geometry() %>% 
-  group_by(Incid_Name) %>%
-  count(START_SEV) %>% 
-  tidyr::pivot_wider(
-    names_from = Incid_Name,
-    values_from = n,
-    values_fill = 0
-  ) %>%
-  print(n = Inf, width = Inf)
-
 low_df <- transects %>%
   filter(START_SEV == "Low") #940 obs
 mod_df <- transects %>%
@@ -388,9 +427,22 @@ high_df %>%
     values_from = n,
     values_fill = 0
   )
+
+low_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+mod_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+high_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
 ```
 
-# Low Starting Severity Model
+### Low Starting Severity Model
 
 ```{r}
 low_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = low_df, REML = TRUE)
@@ -415,7 +467,7 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Moderate Starting Severity Model
+### Moderate Starting Severity Model
 
 ```{r}
 mod_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = mod_df, REML = TRUE)
@@ -440,7 +492,7 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# High Starting Severity Model
+### High Starting Severity Model
 
 ```{r}
 high_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = high_df, REML = TRUE)
@@ -457,89 +509,6 @@ qqline(resid(high_fit), col = "red")
 
 # Residuals vs Fitted
 plot(fitted(high_fit), resid(high_fit),
-     xlab = "Fitted Values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-
-par(mfrow = c(1, 1))
-```
-
-# Entering + L/M/H Models
-
-```{r}
-low_enter_df <- low_df %>%
-  filter(type == "entering") #940 obs -> 410 obs
-mod_enter_df <- mod_df %>%
-  filter(type == "entering") #550 obs -> 240 obs
-high_enter_df <- high_df %>%
-  filter(type == "entering") #1860 obs -> 780 obs
-```
-
-# Entering + Low Starting Severity Model
-
-```{r}
-low_ent_fit <- lmer(rdnbr ~ TRT_TYPE + (1|Event_ID/Transect_ID), data = low_enter_df, REML = TRUE)
-
-summary(low_ent_fit)
-
-# Residual diagnostic plots for m1
-par(mfrow = c(1, 2))
-
-# Q-Q plot
-qqnorm(resid(low_ent_fit), main = "Q-Q Plot of Residuals")
-qqline(resid(low_ent_fit), col = "red")
-
-# Residuals vs Fitted
-plot(fitted(low_ent_fit), resid(low_ent_fit),
-     xlab = "Fitted Values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-
-par(mfrow = c(1, 1))
-```
-
-# Entering + Moderate Starting Severity Model
-
-```{r}
-mod_ent_fit <- lmer(rdnbr ~ TRT_TYPE + (1|Event_ID/Transect_ID), data = mod_enter_df, REML = TRUE)
-
-summary(mod_ent_fit)
-
-# Residual diagnostic plots for m1
-par(mfrow = c(1, 2))
-
-# Q-Q plot
-qqnorm(resid(mod_ent_fit), main = "Q-Q Plot of Residuals")
-qqline(resid(mod_ent_fit), col = "red")
-
-# Residuals vs Fitted
-plot(fitted(mod_ent_fit), resid(mod_ent_fit),
-     xlab = "Fitted Values",
-     ylab = "Residuals",
-     main = "Residuals vs Fitted")
-abline(h = 0, col = "red", lty = 2)
-
-par(mfrow = c(1, 1))
-```
-
-# Entering + High Starting Severity Model
-
-```{r}
-high_ent_fit <- lmer(rdnbr ~ TRT_TYPE + (1|Event_ID/Transect_ID), data = high_enter_df, REML = TRUE)
-
-summary(high_ent_fit)
-
-# Residual diagnostic plots for m1
-par(mfrow = c(1, 2))
-
-# Q-Q plot
-qqnorm(resid(high_ent_fit), main = "Q-Q Plot of Residuals")
-qqline(resid(high_ent_fit), col = "red")
-
-# Residuals vs Fitted
-plot(fitted(high_ent_fit), resid(high_ent_fit),
      xlab = "Fitted Values",
      ylab = "Residuals",
      main = "Residuals vs Fitted")
@@ -570,7 +539,7 @@ lodge_df <- transects %>%
   ungroup() #200 observations
 ```
 
-# Ponderosa Model
+### Ponderosa Model
 
 ```{r}
 pondo_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = pondo_df, REML = TRUE)
@@ -595,7 +564,7 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Mixed Conifer Model
+### Mixed Conifer Model
 
 ```{r}
 mixed_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = mixed_df, REML = TRUE)
@@ -620,7 +589,7 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Lodgepole Model
+### Lodgepole Model
 
 ```{r}
 lodge_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = lodge_df, REML = TRUE) #Remove Event_ID in random effects because the only fire is Cameron Peak
@@ -645,4 +614,734 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Random forest model to determine what is driving a bimodal distribution...
+# Dispersion L/M/H
+
+Uneven sample size and heterogeneity within fires means that the variance within fires varies widely
+
+```{r}
+table(transects$Incid_Name)
+
+transects %>%
+  st_drop_geometry %>%
+  group_by(Incid_Name) %>%
+  summarise(n = n(), var_rdnbr = var(rdnbr), sd_rdnbr = sd(rdnbr)) %>%
+  arrange(desc(var_rdnbr))
+```
+
+### Disp + Low Starting Severity Model
+
+```{r}
+low_disp_fit <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = low_df, dispformula = ~Event_ID, REML = TRUE)
+
+summary(low_disp_fit)
+
+sim_low_disp <- simulateResiduals(low_disp_fit)
+plot(sim_low_disp)
+```
+
+### Disp + Moderate Starting Severity  Model
+
+Warning message:
+In finalizeTMB(TMBStruc, obj, fit, h, data.tmb.old) :
+  Model convergence problem; non-positive-definite Hessian matrix. See vignette('troubleshooting')
+  
+  -> fixed warning by simplifying random effect structure (just including Transect_ID)
+
+```{r}
+mod_disp_fit <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = mod_df, dispformula = ~ Event_ID, REML = TRUE)
+
+summary(mod_disp_fit)
+
+sim_mod_disp <- simulateResiduals(mod_disp_fit)
+plot(sim_mod_disp)
+```
+
+### Disp + High Starting Severity Model
+
+Warning message:
+In finalizeTMB(TMBStruc, obj, fit, h, data.tmb.old) :
+  Model convergence problem; non-positive-definite Hessian matrix. See vignette('troubleshooting') 
+  
+  -> fixed warning by simplifying random effect structure (just including Transect_ID)
+
+```{r}
+high_disp_fit <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Transect_ID), data = high_df, dispformula = ~ Event_ID, REML = TRUE)
+
+summary(high_disp_fit)
+
+sim_high_disp <- simulateResiduals(high_disp_fit)
+plot(sim_high_disp)
+```
+
+# Treatment Type Models
+
+Create new dataframes for each "TRT_TYPE" based on points 6-10 for entering and points 1-5 for exiting.
+
+While "TRT_TYPE" is a point level variable, these dataframes will be created based on full transects (i.e. the untreated points in each entering/exiting transect will be included in the dataframe for the treatment type of the treated points).
+
+If treated points in transects have a mix of treatments (n = 9 transects), they will be flagged and put in both relevant dataframes. "Untreated" will only include control transects.
+
+
+```{r}
+#Create Datasets for each treatment type based on the values for points 6-10 if entering and points 1-5 if exiting
+treated_half_summary <- transects %>%
+  filter(
+    (type == "entering" & Point_ID >= 6) |
+    (type == "exiting"  & Point_ID <= 5)
+  ) %>%
+  group_by(Transect_ID, type) %>%
+  summarise(
+    n_trt_types   = n_distinct(TRT_TYPE),
+    trt_types     = paste(sort(unique(TRT_TYPE)), collapse = ", "),
+    n_points      = n(),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(n_trt_types))
+
+# How many transects are "mixed" (more than one TRT_TYPE in the treated half)?
+mixed_transects <- treated_half_summary %>%
+  filter(n_trt_types > 1)
+```
+
+Create each dataframe 
+
+```{r}
+# Build a lookup of treated-half TRT_TYPE diversity per transect
+treated_half_lookup <- transects %>%
+  filter(
+    (type == "entering" & Point_ID >= 6) |
+    (type == "exiting"  & Point_ID <= 5)
+  ) %>%
+  group_by(Transect_ID) %>%
+  summarise(
+    n_trt_types    = n_distinct(TRT_TYPE),
+    mixed_trt      = n_trt_types > 1,
+    # dominant type = the TRT_TYPE with the most points in the treated half
+    # ties broken alphabetically for reproducibility -- adjust if you want
+    # a different tie-break rule
+    dominant_trt_type = TRT_TYPE[which.max(table(TRT_TYPE)[TRT_TYPE])],
+    .groups = "drop"
+  ) %>%
+  select(Transect_ID, mixed_trt, dominant_trt_type)
+
+# Untreated: whole control transects, flagged as not mixed (no treated half)
+untreated_df <- transects %>%
+  filter(type == "control") %>%
+  mutate(mixed_trt = FALSE, dominant_trt_type = NA_character_)
+
+# Helper: find transects whose TREATED half contains `trt` anywhere,
+# return the full transect with mixed_trt / dominant_trt_type attached
+make_trt_df <- function(df, trt, lookup) {
+  ids <- df %>%
+    filter(
+      (type == "entering" & Point_ID >= 6 & TRT_TYPE == trt) |
+      (type == "exiting"  & Point_ID <= 5 & TRT_TYPE == trt)
+    ) %>%
+    pull(Transect_ID) %>%
+    unique()
+
+  df %>%
+    filter(Transect_ID %in% ids) %>%
+    left_join(lookup, by = "Transect_ID")
+}
+
+rearrangement_df <- make_trt_df(transects, "Rearrangement", treated_half_lookup)
+removal_df <- make_trt_df(transects, "Removal", treated_half_lookup)
+broadcast_df <- make_trt_df(transects, "Broadcast Burn", treated_half_lookup)
+wildfire_df <- make_trt_df(transects, "Wildfire", treated_half_lookup)
+```
+
+### Summary of Transects per Fire
+
+```{r}
+untreated_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+
+rearrangement_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+
+removal_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+
+broadcast_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+
+wildfire_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+```
+
+### Untreated Model
+
+Does not include TRT_TYPE since they are all untreated
+
+Does not include Point_ID*type interaction since these are all controls
+
+```{r}
+untreated_fit <- lmer(rdnbr ~ (1|Event_ID/Transect_ID), data = untreated_df, REML = TRUE)
+
+summary(untreated_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(untreated_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(untreated_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(untreated_fit), resid(untreated_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Rearrangement Model
+
+Back to including TRT_TYPE and Point_ID*type
+
+```{r}
+rearrangement_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = rearrangement_df, REML = TRUE)
+
+summary(rearrangement_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(rearrangement_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(rearrangement_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(rearrangement_fit), resid(rearrangement_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+
+# Filtering out the mixed transects
+rearrangement_pure_df <- rearrangement_df %>%
+  filter(mixed_trt == FALSE)
+
+rearrangement_pure_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = rearrangement_pure_df, REML = TRUE)
+
+summary(rearrangement_pure_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(rearrangement_pure_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(rearrangement_pure_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(rearrangement_pure_fit), resid(rearrangement_pure_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Removal Model
+
+```{r}
+removal_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = removal_df, REML = TRUE)
+
+summary(removal_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(removal_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(removal_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(removal_fit), resid(removal_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+
+# Filtering out the mixed transects
+removal_pure_df <- removal_df %>%
+  filter(mixed_trt == FALSE)
+
+removal_pure_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = removal_pure_df, REML = TRUE)
+
+summary(removal_pure_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(removal_pure_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(removal_pure_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(removal_pure_fit), resid(removal_pure_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Broadcast Model
+
+```{r}
+broadcast_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = broadcast_df, REML = TRUE)
+
+summary(broadcast_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(broadcast_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(broadcast_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(broadcast_fit), resid(broadcast_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+
+# Filtering out the mixed transects
+broadcast_pure_df <- broadcast_df %>%
+  filter(mixed_trt == FALSE)
+
+broadcast_pure_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = broadcast_pure_df, REML = TRUE)
+
+summary(broadcast_pure_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(broadcast_pure_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(broadcast_pure_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(broadcast_pure_fit), resid(broadcast_pure_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Wildfire Model
+
+```{r}
+wildfire_fit <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = wildfire_df, REML = TRUE)
+
+summary(wildfire_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(wildfire_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(wildfire_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(wildfire_fit), resid(wildfire_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+# Entering - Gavin Model
+
+Trying to recreate Gavin's model, but with a random effect for fire as well and not using a Poisson log-link distribution.
+
+rdnbr ~ type + treated + (1|Event_ID/Transect_ID)
+
+Where type = control or entering & treated = untreated or broadcast/wildfire
+
+And run separate models for transects starting in L/M/H
+
+```{r}
+# Filter by TRT_TYPE to only include broadcast or wildfire
+black_df <- transects %>%
+  filter(!TRT_TYPE %in% c("Rearrangement", "Removal")) %>%
+  filter(type != "exiting")
+
+black_df$TRT_TYPE <- factor(black_df$TRT_TYPE, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
+black_df$type <- factor(black_df$type, levels = c("control", "entering"))
+
+black_low_df <- black_df %>%
+  filter(START_SEV == "Low") #593 obs
+black_mod_df <- black_df %>%
+  filter(START_SEV == "Moderate") #352 obs
+black_high_df <- black_df %>%
+  filter(START_SEV == "High") #1385 obs
+
+black_low_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+black_mod_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+black_high_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+```
+
+### Low Jones Model
+
+```{r}
+black_low_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_low_df, REML = TRUE)
+
+summary(black_low_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black_low_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black_low_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black_low_fit), resid(black_low_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Moderate Jones Model
+
+Fit is singular, fixed when removing Event_ID random effect
+
+```{r}
+black_mod_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_mod_df, REML = TRUE)
+
+summary(black_mod_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black_mod_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black_mod_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black_mod_fit), resid(black_mod_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Jones Model
+
+```{r}
+black_high_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_high_df, REML = TRUE)
+
+summary(black_high_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black_high_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black_high_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black_high_fit), resid(black_high_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Plot effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low  <- ggpredict(black_low_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod  <- ggpredict(black_mod_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high <- ggpredict(black_high_fit, terms = c("type", "treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+treated combination,
+# and relabel x-axis categories
+pred_all <- bind_rows(pred_low, pred_mod, pred_high) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all$severity <- factor(pred_all$severity, levels = c("High", "Moderate", "Low"))
+
+# Plot
+ggplot(pred_all, aes(x = x, y = predicted, group = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+# Exiting - Gavin Model
+
+Trying to recreate Gavin's model, but with a random effect for fire as well and not using a Poisson log-link distribution.
+
+rdnbr ~ type + treated + (1|Event_ID/Transect_ID)
+
+Where type = control or exiting & treated = untreated or broadcast/wildfire
+
+And run separate models for transects starting in L/M/H
+
+```{r}
+# Filter by TRT_TYPE to only include broadcast or wildfire
+black2_df <- transects %>%
+  filter(!TRT_TYPE %in% c("Rearrangement", "Removal")) %>%
+  filter(type != "entering")
+
+black2_df$TRT_TYPE <- factor(black2_df$TRT_TYPE, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
+black2_df$type <- factor(black2_df$type, levels = c("control", "exiting"))
+
+black2_low_df <- black2_df %>%
+  filter(START_SEV == "Low") #593 obs
+black2_mod_df <- black2_df %>%
+  filter(START_SEV == "Moderate") #352 obs
+black2_high_df <- black2_df %>%
+  filter(START_SEV == "High") #1385 obs
+
+black2_low_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+black2_mod_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+black2_high_df %>%
+    distinct(Transect_ID, Incid_Name) %>%
+    count(Incid_Name, name = "n_transects") %>%
+    arrange(desc(n_transects))
+```
+
+### Low Jones Model
+
+```{r}
+black2_low_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_low_df, REML = TRUE)
+
+summary(black2_low_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black2_low_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black2_low_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black2_low_fit), resid(black2_low_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Moderate Jones Model
+
+Fit is singular, fixed when removing Event_ID random effect
+
+```{r}
+black2_mod_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_mod_df, REML = TRUE)
+
+summary(black2_mod_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black2_mod_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black2_mod_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black2_mod_fit), resid(black2_mod_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Jones Model
+
+```{r}
+black2_high_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_high_df, REML = TRUE)
+
+summary(black2_high_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black2_high_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black2_high_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black2_high_fit), resid(black2_high_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Plot effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low2  <- ggpredict(black2_low_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod2  <- ggpredict(black2_mod_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high2 <- ggpredict(black2_high_fit, terms = c("type", "treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+treated combination,
+# and relabel x-axis categories
+pred_all2 <- bind_rows(pred_low2, pred_mod2, pred_high2) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all2$severity <- factor(pred_all2$severity, levels = c("High", "Moderate", "Low"))
+
+pred_all2$group <- factor(pred_all2$group, levels = c("Yes", "No"))
+
+# Plot
+ggplot(pred_all2, aes(x = x, y = predicted, group = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+# Dispersion Gavin Models
+
+```{r}
+black_low_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_low_df, dispformula = ~ Event_ID, REML = TRUE)
+
+summary(black_low_disp_fit)
+
+sim_black_low_disp <- simulateResiduals(black_low_disp_fit)
+plot(sim_black_low_disp)
+```
+
+```{r}
+black_mod_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_mod_df, dispformula = ~ Event_ID, REML = TRUE)
+
+summary(black_mod_disp_fit)
+
+sim_black_mod_disp <- simulateResiduals(black_mod_disp_fit)
+plot(sim_black_mod_disp)
+```
+
+```{r}
+black_high_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_high_df, dispformula = ~ Event_ID, REML = TRUE) # Convergence problem
+
+summary(black_high_disp_fit)
+
+sim_black_high_disp <- simulateResiduals(black_high_disp_fit)
+plot(sim_black_high_disp)
+```
+
+```{r}
+black2_low_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_low_df, dispformula = ~ Event_ID, REML = TRUE)
+
+summary(black2_low_disp_fit)
+
+sim_black2_low_disp <- simulateResiduals(black2_low_disp_fit)
+plot(sim_black2_low_disp)
+```
+
+```{r}
+black2_mod_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_mod_df, dispformula = ~ Event_ID, REML = TRUE)
+
+summary(black2_mod_disp_fit)
+
+sim_black2_mod_disp <- simulateResiduals(black2_mod_disp_fit)
+plot(sim_black2_mod_disp)
+```
+
+```{r}
+black2_high_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_high_df, dispformula = ~ Event_ID, REML = TRUE) # Convergence problem
+
+summary(black2_high_disp_fit)
+
+sim_black2_high_disp <- simulateResiduals(black2_high_disp_fit)
+plot(sim_black2_high_disp)
+```
