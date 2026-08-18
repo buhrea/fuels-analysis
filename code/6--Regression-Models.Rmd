@@ -25,6 +25,7 @@ library(DHARMa)
 library(ggeffects)
 library(brms)
 library(here)
+library(performance)
 
 transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
 
@@ -1016,6 +1017,36 @@ black_high_df %>%
     distinct(Transect_ID, Incid_Name) %>%
     count(Incid_Name, name = "n_transects") %>%
     arrange(desc(n_transects))
+
+black_low_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, type) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(Inf)
+
+black_mod_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, type) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(Inf)
+
+black_high_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, type) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(Inf)
 ```
 
 ### Low Jones Model
@@ -1040,6 +1071,14 @@ plot(fitted(black_low_fit), resid(black_low_fit),
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1)) 
+
+sim_black_low <- simulateResiduals(black_low_fit)
+plot(sim_black_low)
+
+testUniformity(sim_black_low) 
+testOutliers(sim_black_low)
+testDispersion(sim_black_low) 
+testQuantiles(sim_black_low) 
 ```
 
 ### Moderate Jones Model
@@ -1066,6 +1105,8 @@ plot(fitted(black_mod_fit), resid(black_mod_fit),
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1)) 
+
+check_overdispersion(black_mod_fit)
 ```
 
 ### High Jones Model
@@ -1090,6 +1131,8 @@ plot(fitted(black_high_fit), resid(black_high_fit),
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1)) 
+
+check_overdispersion(black_high_fit)
 ```
 
 ### Plot effect
@@ -1171,6 +1214,36 @@ black2_high_df %>%
     distinct(Transect_ID, Incid_Name) %>%
     count(Incid_Name, name = "n_transects") %>%
     arrange(desc(n_transects))
+
+black2_low_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, type) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(Inf)
+
+black2_mod_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, type) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(Inf)
+
+black2_high_df %>% 
+  st_drop_geometry() %>% 
+  count(EVT_Group, type) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>%
+  print(Inf)
 ```
 
 ### Low Jones Model
@@ -1195,11 +1268,12 @@ plot(fitted(black2_low_fit), resid(black2_low_fit),
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1)) 
+
+
 ```
 
 ### Moderate Jones Model
 
-Fit is singular, fixed when removing Event_ID random effect
 
 ```{r}
 black2_mod_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_mod_df, REML = TRUE)
@@ -1221,6 +1295,8 @@ plot(fitted(black2_mod_fit), resid(black2_mod_fit),
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1)) 
+
+check_overdispersion(black2_mod_fit)
 ```
 
 ### High Jones Model
@@ -1245,6 +1321,9 @@ plot(fitted(black2_high_fit), resid(black2_high_fit),
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1)) 
+
+check_overdispersion(black2_high_fit)
+r2(black2_high_fit)
 ```
 
 ### Plot effect
@@ -1292,6 +1371,8 @@ ggplot(pred_all2, aes(x = x, y = predicted, group = group)) +
 
 # Dispersion Gavin Models
 
+### Disp + Low, Entering
+
 ```{r}
 black_low_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_low_df, dispformula = ~ Event_ID, REML = TRUE)
 
@@ -1299,7 +1380,12 @@ summary(black_low_disp_fit)
 
 sim_black_low_disp <- simulateResiduals(black_low_disp_fit)
 plot(sim_black_low_disp)
+
+
+check_heteroskedasticity(black_low_disp_fit)
 ```
+
+### Disp + Mod, Entering
 
 ```{r}
 black_mod_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_mod_df, dispformula = ~ Event_ID, REML = TRUE)
@@ -1310,6 +1396,8 @@ sim_black_mod_disp <- simulateResiduals(black_mod_disp_fit)
 plot(sim_black_mod_disp)
 ```
 
+### Disp + High, Entering
+
 ```{r}
 black_high_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_high_df, dispformula = ~ Event_ID, REML = TRUE) # Convergence problem
 
@@ -1318,6 +1406,49 @@ summary(black_high_disp_fit)
 sim_black_high_disp <- simulateResiduals(black_high_disp_fit)
 plot(sim_black_high_disp)
 ```
+
+### Plot Entering Effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low_disp  <- ggpredict(black_low_disp_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod_disp  <- ggpredict(black_mod_disp_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high_disp <- ggpredict(black_high_disp_fit, terms = c("type", "treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+treated combination,
+# and relabel x-axis categories
+pred_all_disp <- bind_rows(pred_low_disp, pred_mod_disp, pred_high_disp) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all_disp$severity <- factor(pred_all_disp$severity, levels = c("High", "Moderate", "Low"))
+
+# Plot
+ggplot(pred_all_disp, aes(x = x, y = predicted, group = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
+```
+
+### Disp + Low, Exiting
 
 ```{r}
 black2_low_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_low_df, dispformula = ~ Event_ID, REML = TRUE)
@@ -1328,6 +1459,8 @@ sim_black2_low_disp <- simulateResiduals(black2_low_disp_fit)
 plot(sim_black2_low_disp)
 ```
 
+### Disp + Mod, Exiting
+
 ```{r}
 black2_mod_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_mod_df, dispformula = ~ Event_ID, REML = TRUE)
 
@@ -1336,6 +1469,8 @@ summary(black2_mod_disp_fit)
 sim_black2_mod_disp <- simulateResiduals(black2_mod_disp_fit)
 plot(sim_black2_mod_disp)
 ```
+
+### Disp + High, Exiting
 
 ```{r}
 black2_high_disp_fit <- glmmTMB(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_high_df, dispformula = ~ Event_ID, REML = TRUE) # Convergence problem
