@@ -34,6 +34,9 @@ transects$TCC <- as.numeric(transects$TCC)
 transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
 transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Rearrangement", "Removal", "Broadcast Burn", "Wildfire"))
 transects$type <- factor(transects$type, levels = c("control", "entering", "exiting"))
+transects$Event_ID <- factor(transects$Event_ID)
+transects$Incid_Name <- factor(transects$Incid_Name)
+transects$TransectID <- factor(transects$Transect_ID)
 
 #Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
 transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
@@ -46,9 +49,9 @@ transects <- transects %>%
 mutate(
     start_value = mean(rdnbr[Point_ID %in% 1:5], na.rm = TRUE),
     START_SEV = case_when(
-      start_value < 300              ~ "Low",
-      start_value >= 300 & start_value <= 500 ~ "Moderate",
-      start_value > 500              ~ "High",
+      start_value <= 338              ~ "Low",
+      start_value >= 339 & start_value <= 726 ~ "Moderate",
+      start_value >= 727              ~ "High",
     )
   ) %>%
   ungroup() %>%
@@ -58,7 +61,7 @@ mutate(
 transects <- st_drop_geometry(transects)
 ```
 
-## Response Variable Distribution
+## Response Distribution and Density
 
 ```{r}
 hist(transects$cbi, breaks = 30)
@@ -81,13 +84,6 @@ ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
   geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.5) + #add after_stat to scale each group based on sample size (area under curve = 1 across all groups, not for each individual group)
   theme_bw()
 
-#Faceted by EVT for easier viewing
-ggplot(transects, aes(x = rdnbr, fill = EVT_Group)) +
-  geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
-  facet_wrap(~EVT_Group, ncol = 2) +
-  theme_bw() +
-  theme(legend.position = "none")
-
 ggplot(transects, aes(x = rdnbr, fill = TRT_TYPE)) +
   geom_density(aes(y = after_stat(count / sum(count))), alpha = 0.7) +
   theme_bw()
@@ -105,9 +101,10 @@ ggplot(transects, aes(x = rdnbr, fill = Incid_Name)) +
 ggplot(transects, aes(x = rdnbr, fill = extreme_area)) +
   geom_density(alpha = 0.7) +
   theme_bw() #not scaled for sample size, getting error
+
 ```
 
-## Look at shape of relationship between each predictor and RdNBR
+## Predictor Relationship Plots
 
 ```{r}
 ggplot(transects, aes(x = TRT_TYPE, y = rdnbr)) +
@@ -119,56 +116,43 @@ ggplot(transects, aes(x = extreme_area, y = rdnbr)) +
 ggplot(transects, aes(x = EVT_Group, y = rdnbr)) +
   geom_boxplot()
 
-ggplot(transects, aes(x = COUNT, y = rdnbr)) +
-  geom_point()
-
-ggplot(transects, aes(x = AGE, y = rdnbr)) +
-  geom_point()
-
-ggplot(transects, aes(x = elevation, y = rdnbr)) +
-  geom_point() +
-  geom_smooth(method="loess")
-
-ggplot(transects, aes(x = elevation, y = cbi)) +
-  geom_point()+
-  geom_smooth(method="loess")
-
-ggplot(transects, aes(x = TCC, y = rdnbr)) +
-  geom_point() +
-  geom_smooth(method="loess")
-
-ggplot(transects, aes(x = slope, y = rdnbr)) +
-  geom_point() +
-  geom_smooth(method="loess")
-
-ggplot(transects, aes(x = northness, y = rdnbr)) +
-  geom_point() +
-  geom_smooth(method="loess")
+# ggplot(transects, aes(x = COUNT, y = rdnbr)) +
+#   geom_point()
+# 
+# ggplot(transects, aes(x = AGE, y = rdnbr)) +
+#   geom_point()
+# 
+# ggplot(transects, aes(x = elevation, y = rdnbr)) +
+#   geom_point() +
+#   geom_smooth(method="loess")
+# 
+# ggplot(transects, aes(x = TCC, y = rdnbr)) +
+#   geom_point() +
+#   geom_smooth(method="loess")
+# 
+# ggplot(transects, aes(x = slope, y = rdnbr)) +
+#   geom_point() +
+#   geom_smooth(method="loess")
+# 
+# ggplot(transects, aes(x = northness, y = rdnbr)) +
+#   geom_point() +
+#   geom_smooth(method="loess")
 ```
 
-## Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics and an interaction between point distance and transect type
+## Initial Model
 
-- currently not including age or prev burn sev
+Create linear regression model including nested random effects of transect ID and fire ID. Fixed effects include treatment characteristics and an interaction between point distance and transect type
+
+- currently not including age, count, or prev burn sev
 
 ```{r}
-m3 <- lmer(rdnbr ~ TRT_TYPE + EVT_Group + extreme_area + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
+m1 <- lmer(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Event_ID/Transect_ID), data = transects, REML = TRUE)
 
-summary(m3)
-vif(m3)
-
-#Residuals actually look normally distributed
-hist(resid(m3), breaks = 40)
-# or
-plot(density(resid(m3)))
-
-#Check where outliers are clustered
-transects$resid_m3 <- resid(m3)
-transects[abs(transects$resid_m3) > 1000, c("Incid_Name", "TRT_TYPE", "EVT_Group", "extreme_area", "rdnbr", "resid_m3")]
-
-table(transects$extreme_area, transects$Incid_Name)
+summary(m1)
+vif(m1)
 ```
 
-## Evaluating model assumptions
+### Evaluating model assumptions
 
 Fitted vs residuals plot
 ```{r}
@@ -176,20 +160,22 @@ Fitted vs residuals plot
 par(mfrow = c(1, 2))
 
 # Q-Q plot
-qqnorm(resid(m3), main = "Q-Q Plot of Residuals")
-qqline(resid(m3), col = "red")
+qqnorm(resid(m1), main = "Q-Q Plot of Residuals")
+qqline(resid(m1), col = "red")
 
 # Residuals vs Fitted
-plot(fitted(m3), resid(m3),
+plot(fitted(m1), resid(m1),
      xlab = "Fitted Values",
      ylab = "Residuals",
      main = "Residuals vs Fitted")
 abline(h = 0, col = "red", lty = 2)
 
 par(mfrow = c(1, 1))
+
+#hist(resid(m1), breaks = 40)
 ```
 
-## RdNBR + Dispersion Formula
+### Disp + Initial Model
 
 ```{r}
 m3 <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Incid_Name/Transect_ID), data = transects, dispformula = ~Incid_Name, REML = TRUE)
@@ -200,47 +186,21 @@ sim <- simulateResiduals(m3)
 plot(sim)
 plotResiduals(sim, form = transects$TRT_TYPE)
 plotResiduals(sim, form = transects$Incid_Name)
-testQuantiles(sim)
-testOutliers(sim)
-testDispersion(sim)
 
-library(DHARMa)
-library(dplyr)
-library(ggplot2)
-
-# Extract residuals and attach fire ID (and other grouping vars)
-res <- simulateResiduals(m3, plot = FALSE)
-resid_df <- transects %>%
-  mutate(dharma_resid = res$scaledResiduals)
-
-# 1. Flag the "spike" observations near the upper boundary
-resid_df <- resid_df %>%
-  mutate(near_one = dharma_resid > 0.9)
-
-# 2. Proportion of near-1 residuals by fire
-resid_df %>%
-  group_by(Incid_Name) %>%
-  summarise(
-    n = n(),
-    prop_near_one = mean(near_one),
-    .groups = "drop"
-  ) %>%
-  arrange(desc(prop_near_one)) %>%
-  print(n = Inf)
-
-# 3. Visual: faceted histograms by fire
-ggplot(resid_df, aes(x = dharma_resid)) +
-  geom_histogram(bins = 30, boundary = 0) +
-  facet_wrap(~ Incid_Name, scales = "free_y") +
-  geom_vline(xintercept = 0.9, color = "red", linetype = "dashed") +
-  theme_minimal()
-
-# 4. If a few fires dominate the spike, check chi-square style enrichment
-tab <- table(resid_df$Incid_Name, resid_df$near_one)
-chisq.test(tab)  # will likely be significant with 13 fires + uneven spike
+testZeroInflation(sim)
 ```
 
-# Create a model with only Cameron Peak
+### Zero Inflation
+
+```{r}
+m4 <- glmmTMB(rdnbr ~ TRT_TYPE + Point_ID*type + (1|Incid_Name/Transect_ID), ziformula = ~1 , data = transects)
+summary(m4)
+
+simulationOutput <- simulateResiduals(m4)
+plot(simulationOutput)
+```
+
+# Cameron Peak
 
 ```{r}
 df_cam <- filter(transects, Incid_Name == "CAMERON PEAK")
@@ -267,7 +227,7 @@ abline(h = 0, col = "red", lty = 2)
 par(mfrow = c(1, 1))
 ```
 
-# Cameron Peak + Dispersion argument
+### Disp + Cameron Peak argument
 
 ```{r}
 m6 <- glmmTMB(rdnbr ~ TRT_TYPE + EVT_Group + Point_ID*type + (1|Transect_ID), data = df_cam, dispformula = ~TRT_TYPE, REML = TRUE)
@@ -279,115 +239,6 @@ sim <- simulateResiduals(m6)
 plot(sim)
 plotResiduals(sim, form = df_cam$TRT_TYPE)
 testQuantiles(sim)
-```
-
-## Zero-Inflated Beta Regression
-
-Transform CBI to be with 0-1 exclusive boundaries using Smithson & Verkuilen (2006) transformation. Using a zero inflated formula because 0s account for about 6% of my data while 3s are negligible (0.23%)
-```{r}
-transects <- transects %>%
-  mutate(cbi_01 = cbi / 3,
-         cbi_squeezed = case_when(
-           cbi_01 == 1 ~ 1 - (0.5 / n()),   # nudge exact 3s just below 1
-           TRUE ~ cbi_01                      # leave 0s and interior values as-is
-         ))
-
-m7 <- glmmTMB(cbi_squeezed ~ TRT_TYPE + Point_ID*type + (1|Incid_Name/Transect_ID),
-                  data = transects,
-                  family = beta_family(),
-                  ziformula = ~ Incid_Name,
-                  REML = TRUE)
-
-sim <- simulateResiduals(m7)
-plot(sim)
-plotResiduals(sim, form = transects$TRT_TYPE)
-testQuantiles(sim)
-```
-
-# Zero-Inflated Beta and Ordered Beta via BRMS
-
-```{r}
-# Option A: Zero-Inflated Beta (requires squeezing ONLY if values equal exactly 1)
-# Smithson & Verkuilen squeeze on non-zero values, OR handle 0s natively in ziformula:
-
-transects <- transects %>%
-  mutate(
-    # Standard 0-1 scaling for CBI (range 0 to 3)
-    cbi_prop = cbi / 3,
-    # Squeeze ONLY values == 1 down to 0.9999 so beta family can evaluate the interior
-    cbi_zi = ifelse(cbi_prop == 1, 0.9999, cbi_prop)
-  )
-
-m7_zi <- glmmTMB(
-  cbi_zi ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
-  data = transects,
-  family = beta_family(link = "logit"), # Zero-inflated beta
-  ziformula = ~ 1 # Models probability of exact 0 (unburned)
-)
-
-sim <- simulateResiduals(m7_zi)
-plot(sim)
-plotResiduals(sim, form = transects$TRT_TYPE)
-testQuantiles(sim)
-
-# Option B: Ordered Beta via brms (Handles exact 0s AND 3s natively without squeezing!)
-library(ordbetareg)
-library(brms)
-
-m7_ordbeta <- ordbetareg(
-  formula = cbi_prop ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
-  data = transects,
-  chains = 4, 
-  cores = 4,
-  iter = 2000
-)
-
-library(bayesplot)
-
-# 1A. Density Overlay: Checks overall distribution shape & boundary peaks
-pp_check(m7_ordbeta, type = "dens_overlay", ndraws = 50)
-
-# 1B. Histograms: Compare actual data distribution to 8 simulated replicates
-pp_check(m7_ordbeta, type = "hist", ndraws = 8)
-
-# 1C. Check performance across groups (e.g., Treatment Types)
-pp_check(m7_ordbeta, type = "stat_grouped", group = "TRT_TYPE", stat = "mean")
-
-# Generate simulated response matrix from the posterior draws
-preds <- posterior_predict(m7_ordbeta, ndraws = 250)
-
-# Calculate DHARMa residuals
-dharma_res <- createDHARMa(
-  simulatedResponse = t(preds),
-  observedResponse = transects$cbi_prop,
-  fittedPredictedResponse = apply(preds, 2, median),
-  integerResponse = FALSE
-)
-
-# Plot standard DHARMa diagnostic plots
-plot(dharma_res)
-```
-
-# Ordered beta Regression with Dispersion Formula
-
-```{r}
-# 1. Define formula predicting both mean and phi
-f_m8 <- bf(
-  cbi_prop ~ TRT_TYPE + Point_ID * type + (1 | Incid_Name / Transect_ID),
-  phi ~ TRT_TYPE
-)
-
-# 2. Fit with phi_reg specified so ordbetareg sets the correct phi priors
-m8_ordbeta <- ordbetareg(
-  formula = f_m8,
-  data = transects,
-  phi_reg = "both",  # Tells ordbetareg to expect a regression model for phi
-  chains = 4, 
-  cores = 4,
-  iter = 2000,
-  control = list(adapt_delta = 0.95)
-)
-
 ```
 
 # L/M/H Models
@@ -1004,7 +855,11 @@ black_mod_df <- black_df %>%
   filter(START_SEV == "Moderate") #352 obs
 black_high_df <- black_df %>%
   filter(START_SEV == "High") #1385 obs
+```
 
+### Summary of Data
+```{r}
+# Random Effects
 black_low_df %>%
     distinct(Transect_ID, Incid_Name) %>%
     count(Incid_Name, name = "n_transects") %>%
@@ -1018,6 +873,7 @@ black_high_df %>%
     count(Incid_Name, name = "n_transects") %>%
     arrange(desc(n_transects))
 
+# Vegetation Types
 black_low_df %>% 
   st_drop_geometry() %>% 
   count(EVT_Group, type) %>% 
@@ -1049,7 +905,7 @@ black_high_df %>%
   print(Inf)
 ```
 
-### Low Jones Model
+### Low Entering Model
 
 ```{r}
 black_low_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_low_df, REML = TRUE)
@@ -1070,18 +926,10 @@ plot(fitted(black_low_fit), resid(black_low_fit),
      main = "Residuals vs Fitted")
 abline(h = 0, col = "red", lty = 2)
 
-par(mfrow = c(1, 1)) 
-
-sim_black_low <- simulateResiduals(black_low_fit)
-plot(sim_black_low)
-
-testUniformity(sim_black_low) 
-testOutliers(sim_black_low)
-testDispersion(sim_black_low) 
-testQuantiles(sim_black_low) 
+par(mfrow = c(1, 1))
 ```
 
-### Moderate Jones Model
+### Moderate Entering Model
 
 Fit is singular, fixed when removing Event_ID random effect
 
@@ -1109,7 +957,7 @@ par(mfrow = c(1, 1))
 check_overdispersion(black_mod_fit)
 ```
 
-### High Jones Model
+### High Entering Model
 
 ```{r}
 black_high_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black_high_df, REML = TRUE)
@@ -1246,7 +1094,7 @@ black2_high_df %>%
   print(Inf)
 ```
 
-### Low Jones Model
+### Low Exiting Model
 
 ```{r}
 black2_low_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_low_df, REML = TRUE)
@@ -1272,8 +1120,7 @@ par(mfrow = c(1, 1))
 
 ```
 
-### Moderate Jones Model
-
+### Moderate Exiting Model
 
 ```{r}
 black2_mod_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_mod_df, REML = TRUE)
@@ -1299,7 +1146,7 @@ par(mfrow = c(1, 1))
 check_overdispersion(black2_mod_fit)
 ```
 
-### High Jones Model
+### High Exiting Model
 
 ```{r}
 black2_high_fit <- lmer(rdnbr ~ type + treated + (1|Event_ID/Transect_ID), data = black2_high_df, REML = TRUE)
@@ -1479,4 +1326,45 @@ summary(black2_high_disp_fit)
 
 sim_black2_high_disp <- simulateResiduals(black2_high_disp_fit)
 plot(sim_black2_high_disp)
+```
+
+### Plot Exiting Effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low_disp  <- ggpredict(black2_low_disp_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod_disp  <- ggpredict(black2_mod_disp_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high_disp <- ggpredict(black2_high_disp_fit, terms = c("type", "treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+treated combination,
+# and relabel x-axis categories
+pred_all_disp <- bind_rows(pred_low_disp, pred_mod_disp, pred_high_disp) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all_disp$severity <- factor(pred_all_disp$severity, levels = c("High", "Moderate", "Low"))
+
+# Plot
+ggplot(pred_all_disp, aes(x = x, y = predicted, group = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom"
+  )
 ```

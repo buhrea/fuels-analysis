@@ -1,0 +1,428 @@
+---
+title: "Replicating Jones Models"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 4, tidy = TRUE)
+```
+
+1. Transects were filtered to only include broadcast burning, wildfire, or untreated points.
+
+Note: Incomplete transects (those with thinning-only points filtered out) were allowed in the dataset. EVT groups without broadcast/wildfire treatments were removed from controls. The EVT group "other" was also removed for consistent context.
+
+2. Six models were constructed for different combinations of starting severity and transect type:
+
+Low x Entering, Moderate x Entering, High x Entering
+Low x Exiting, Moderate x Exiting, High x Exiting
+
+3. The model formula is:
+
+rdnbr ~ type + treated + (1|Incid_Name/Transect_ID)
+
+Where type = control or entering/exiting & treated = untreated or broadcast/wildfire
+
+
+```{r, include=FALSE}
+library(tidyverse)
+library(sf)
+library(lme4)
+library(car)
+library(glmmTMB)
+library(DHARMa)
+library(ggeffects)
+library(brms)
+library(here)
+library(performance)
+library(sjPlot) #Table of model outputs
+
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
+
+transects <- filter(transects,!Incid_Name %in% c("TRAIL SPRINGS", "JUNKINS"))
+transects$TCC <- as.numeric(transects$TCC)
+transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
+transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Rearrangement", "Removal", "Broadcast Burn", "Wildfire"))
+transects$type <- factor(transects$type, levels = c("control", "entering", "exiting"))
+transects$Event_ID <- factor(transects$Event_ID)
+transects$Incid_Name <- factor(transects$Incid_Name)
+transects$TransectID <- factor(transects$Transect_ID)
+
+#Add 0 Age for untreated points and create treated y/n column to use in interaction with Age
+transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
+transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
+transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
+
+#Sort start of transects into L/M/H based on average severity of first 5 points
+transects <- transects %>%
+  group_by(Transect_ID) %>% 
+mutate(
+    start_value = round(mean(rdnbr[Point_ID %in% 1:5], na.rm = TRUE)),
+    START_SEV = case_when(
+      start_value <= 338              ~ "Low",
+      start_value >= 339 & start_value <= 726 ~ "Moderate",
+      start_value >= 727              ~ "High",
+    )
+  ) %>%
+  ungroup() %>%
+  select(-start_value)
+
+#Drop geometry
+transects <- st_drop_geometry(transects)
+```
+
+# Dataset Summary
+
+```{r, results = 'asis'}
+jones_df <- transects %>%
+  filter(!TRT_TYPE %in% c("Rearrangement", "Removal")) %>%
+  filter(!EVT_Group %in% c("other", "pinyon-juniper", "spruce-fir")) #removing due to lack of treatments in pj or spruce fir, removing other for lack of context
+```
+
+## Transects by Type in each Fire and Starting Severity
+
+```{r, results = 'asis'}
+# Build abbreviation lookup once, outside the pipe
+fire_abbrevs <- jones_df %>% 
+  st_drop_geometry() %>% 
+  distinct(Incid_Name) %>% 
+  arrange(Incid_Name) %>% 
+  mutate(abbrev = abbreviate(Incid_Name, minlength = 3)) %>% 
+  tibble::deframe()  
+
+jones_df %>% 
+  st_drop_geometry() %>% 
+  count(START_SEV, Incid_Name, type) %>% 
+  dplyr::mutate(
+    n = n / 10,
+    START_SEV = factor(START_SEV, levels = c("Low", "Moderate", "High")),
+    type = factor(type, levels = c("control", "entering", "exiting")),
+    Incid_Name = fire_abbrevs[Incid_Name]  # swap to abbreviation before pivoting
+  ) %>% 
+  tidyr::pivot_wider(
+    names_from = Incid_Name,
+    values_from = n,
+    values_fill = 0
+  ) %>% 
+  dplyr::arrange(START_SEV, type) %>% 
+  dplyr::mutate(
+    Total = rowSums(dplyr::across(where(is.numeric)))
+  ) %>% 
+  dplyr::group_split(START_SEV) %>% 
+  purrr::iwalk(~ {
+    cat("\n\n###", as.character(unique(.x$START_SEV)), "\n\n")
+    print(
+      knitr::kable(
+        dplyr::select(.x, -START_SEV),
+        format = "pipe"
+      )
+    )
+  })
+
+
+# Print the key once, after all three tables
+cat("\n\n**Key:**", paste(names(fire_abbrevs), fire_abbrevs, sep = " = ", collapse = "; "), "\n\n")
+```
+
+## Points by Treatment Type in each EVT Group and Starting Severity
+
+```{r, results = 'asis'}
+#Table of Transects by Type in each EVT Group
+jones_df %>% 
+  st_drop_geometry() %>% 
+  count(START_SEV, EVT_Group, treated) %>% 
+  dplyr::mutate(
+    n = n,
+    START_SEV = factor(START_SEV, levels = c("Low", "Moderate", "High"))
+  ) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT_Group,
+    values_from = n,
+    values_fill = 0
+  ) %>% 
+  dplyr::arrange(START_SEV, treated) %>% 
+  dplyr::group_split(START_SEV) %>% 
+  purrr::iwalk(~ {
+    cat("\n\n###", as.character(unique(.x$START_SEV)), "\n\n")
+    print(
+      knitr::kable(
+        dplyr::select(.x, -START_SEV),
+        format = "pipe"
+      )
+    )
+  })
+```
+
+
+```{r}
+# Filter by TRT_TYPE to only include broadcast or wildfire
+black_df <- jones_df %>%
+  filter(type != "exiting")
+
+black_df$TRT_TYPE <- factor(black_df$TRT_TYPE, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
+black_df$type <- factor(black_df$type, levels = c("control", "entering"))
+
+black_low_df <- black_df %>%
+  filter(START_SEV == "Low") #593 obs
+black_mod_df <- black_df %>%
+  filter(START_SEV == "Moderate") #352 obs
+black_high_df <- black_df %>%
+  filter(START_SEV == "High") #1385 obs
+```
+
+
+```{r}
+# Filter by TRT_TYPE to only include broadcast or wildfire
+black2_df <- jones_df %>%
+  filter(type != "entering")
+
+black2_df$TRT_TYPE <- factor(black2_df$TRT_TYPE, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
+black2_df$type <- factor(black2_df$type, levels = c("control", "exiting"))
+
+black2_low_df <- black2_df %>%
+  filter(START_SEV == "Low") #593 obs
+black2_mod_df <- black2_df %>%
+  filter(START_SEV == "Moderate") #352 obs
+black2_high_df <- black2_df %>%
+  filter(START_SEV == "High") #1385 obs
+```
+
+# Entering Models
+
+### Low Entering Model
+
+```{r}
+black_low_fit <- lmer(rdnbr ~ type + treated + (1|Incid_Name/Transect_ID), data = black_low_df, REML = TRUE)
+
+tab_model(black_low_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black_low_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black_low_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black_low_fit), resid(black_low_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Moderate Entering Model
+
+```{r}
+black_mod_fit <- lmer(rdnbr ~ type + treated + (1|Incid_Name/Transect_ID), data = black_mod_df, REML = TRUE)
+
+tab_model(black_mod_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black_mod_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black_mod_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black_mod_fit), resid(black_mod_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Entering Model
+
+```{r}
+black_high_fit <- lmer(rdnbr ~ type + treated + (1|Incid_Name/Transect_ID), data = black_high_df, REML = TRUE)
+
+tab_model(black_high_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black_high_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black_high_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black_high_fit), resid(black_high_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Entering Effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low  <- ggpredict(black_low_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod  <- ggpredict(black_mod_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high <- ggpredict(black_high_fit, terms = c("type", "treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+treated combination,
+# and relabel x-axis categories
+pred_all <- bind_rows(pred_low, pred_mod, pred_high) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all$severity <- factor(pred_all$severity, levels = c("High", "Moderate", "Low"))
+
+# Plot
+ggplot(pred_all, aes(x = x, y = predicted, group = group, shape = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+```
+
+# Exiting Models
+
+### Low Exiting Model
+
+```{r}
+black2_low_fit <- lmer(rdnbr ~ type + treated + (1|Incid_Name/Transect_ID), data = black2_low_df, REML = TRUE)
+
+tab_model(black2_low_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black2_low_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black2_low_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black2_low_fit), resid(black2_low_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+
+
+```
+
+### Moderate Exiting Model
+
+```{r}
+black2_mod_fit <- lmer(rdnbr ~ type + treated + (1|Incid_Name/Transect_ID), data = black2_mod_df, REML = TRUE)
+
+tab_model(black2_mod_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black2_mod_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black2_mod_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black2_mod_fit), resid(black2_mod_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Exiting Model
+
+```{r}
+black2_high_fit <- lmer(rdnbr ~ type + treated + (1|Incid_Name/Transect_ID), data = black2_high_df, REML = TRUE)
+
+tab_model(black2_high_fit)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(black2_high_fit), main = "Q-Q Plot of Residuals")
+qqline(resid(black2_high_fit), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(black2_high_fit), resid(black2_high_fit),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Exiting Effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low2  <- ggpredict(black2_low_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod2  <- ggpredict(black2_mod_fit,  terms = c("type", "treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high2 <- ggpredict(black2_high_fit, terms = c("type", "treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+treated combination,
+# and relabel x-axis categories
+pred_all2 <- bind_rows(pred_low2, pred_mod2, pred_high2) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all2$severity <- factor(pred_all2$severity, levels = c("High", "Moderate", "Low"))
+
+pred_all2$group <- factor(pred_all2$group, levels = c("Yes", "No"))
+
+# Plot
+ggplot(pred_all2, aes(x = x, y = predicted, group = group, shape = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "none"
+  )
+```
