@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 4, tidy = TRUE)
 ```
 
-# Set-Up
+# Load Packages
 
 ```{r}
 library(tidyverse)
@@ -23,47 +23,30 @@ library(randomForest)
 library(patchwork)
 library(pdp)
 library(here)
+library(glmnet)
+library(ranger)
+library(tidymodels)
+```
 
-plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") 
+# Load Data
+
+```{r}
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
+  st_drop_geometry()
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
-
-colnames(plots)
 
 plots <- plots %>%
   mutate(across(c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
 
+plots_100m <- filter(plots, buffer_radius == 100)
+plots_250m <- filter(plots, buffer_radius == 250)
+plots_500m <- filter(plots, buffer_radius == 500)
 ```
 
-# Look at all individual linear relationships
-```{r}
-predictors <- c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire",
-                 "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC",
-                 "prop_aspen", "prop_lodgepole", "prop_mixed.conifer",
-                 "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir", "prop_other")
+# Correlation of Predictor Variables
 
-plot_list_high <- lapply(predictors, function(var) {
-  ggplot(plots, aes(x = .data[[var]], y = prop_high_sev)) +
-    geom_point() +
-    geom_smooth(method = "loess")
-})
-
-names(plot_list_high) <- predictors
-
-wrap_plots(plot_list_high, ncol = 4)
-
-plot_list_mohi <- lapply(predictors, function(var) {
-  ggplot(plots, aes(x = .data[[var]], y = prop_mod_high_sev)) +
-    geom_point() +
-    geom_smooth(method = "loess")
-})
-
-names(plot_list_mohi) <- predictors
-
-wrap_plots(plot_list_mohi, ncol = 4)
-```
-
-# Calculate VIF scores
+VIF and linear correlation
 
 ```{r}
 model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + TMIN + TOTAL_COUNT + prop_Rearrangement + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
@@ -94,6 +77,83 @@ cor_df <- cor_df %>%
 
 print(cor_df)
 ```
+
+# Random Forest Settings
+
+```{r}
+rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 2000)
+rf_defaults
+
+preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Incid_Name")
+```
+
+# High-severity proportion
+
+## 100m
+
+```{r}
+set.seed(4595)
+data_split_hi100 <- initial_split(plots_100m, strata = "prop_high_sev", prop = 0.75)
+
+hi100_train <- training(data_split_hi100)
+hi100_test  <- testing(data_split_hi100)
+```
+
+```{r}
+rf_xy_fit_hi100 <- 
+  rf_defaults %>%
+  set_engine("ranger") %>%
+  fit_xy(
+    x = hi100_train[, preds],
+    y = hi100_train$prop_high_sev
+  )
+
+rf_xy_fit_hi100
+```
+
+```{r}
+test_results_hi100 <- 
+  hi100_test %>%
+  select(prop_high_sev) %>%
+  bind_cols(
+    predict(rf_xy_fit_hi100, new_data = hi100_test[, preds])
+  )
+test_results_hi100 %>% slice(1:5)
+
+# summarize performance
+test_results_hi100 %>% metrics(truth = prop_high_sev, estimate = .pred) 
+```
+
+```{r}
+library(DALEXtra)
+
+hi100_explainer <- explain_tidymodels(
+  rf_xy_fit_hi100,
+  data = dplyr::select(hi100_train, -prop_high_sev),
+  y = hi100_train$prop_high_sev
+)
+
+# Partial dependence plots
+pdp_prop <- model_profile(hi100_explainer, 
+                          variables = "prop_extent_treated", 
+                          N = NULL,
+                          groups = "Incid_Name")
+
+plot(pdp_prop)
+```
+
+## 250m
+
+## 500m
+
+# Moderate to High-severity proportion
+
+## 100m
+
+## 250m
+
+## 500m
+
 
 # Random Forest - Prop high severity
 
