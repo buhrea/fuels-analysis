@@ -26,18 +26,20 @@ library(here)
 library(glmnet)
 library(ranger)
 library(tidymodels)
+library(spatialsample) #Spatial Crossvalidation
+library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 ```
 
 # Load Data
 
 ```{r}
-plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
-  st_drop_geometry()
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") 
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
 
 plots <- plots %>%
   mutate(across(c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
+
 
 plots_100m <- filter(plots, buffer_radius == 100)
 plots_250m <- filter(plots, buffer_radius == 250)
@@ -81,23 +83,142 @@ print(cor_df)
 # Random Forest Settings
 
 ```{r}
-rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 2000)
+rf_defaults <- rand_forest(mode = "regression",  
+                           mtry = tune(), 
+                           trees = 2000,
+                           min_n = tune())
 rf_defaults
 
-preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Incid_Name")
+#preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Incid_Name")
 ```
+
 
 # High-severity proportion
 
 ## 100m
 
 ```{r}
-set.seed(4595)
+set.seed(123)
 data_split_hi100 <- initial_split(plots_100m, strata = "prop_high_sev", prop = 0.75)
-
 hi100_train <- training(data_split_hi100)
 hi100_test  <- testing(data_split_hi100)
 ```
+
+Create a recipe
+```{r}
+hi100_rec <- recipe(prop_high_sev ~ PRCP + TMAX + slope + northness + prop_extent_treated + TCC, data = hi100_train)
+
+hi100_prep <- prep(hi100_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(hi100_rec) %>%
+  add_model(tune_spec)
+```
+
+Train hyperparameters 
+```{r}
+set.seed(234)
+hi100_folds <- spatial_block_cv(hi100_train, v = 10)
+#can also use group_vfold_cv, group = "Incid Name" for leave-one-out cross validation. use spatial_block_cv otherwise (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = hi100_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = hi100_folds,
+  grid = rf_grid
+)
+
+regular_res
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+final_rf <- finalize_model(
+  tune_spec,
+  best_rmse
+) 
+
+final_wf <- finalize_workflow(tune_wf, best_rmse)
+
+final_fit <- last_fit(final_wf, data_split_hi100)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+```
+
+Variable Importance Plot
+```{r}
+hi100_explainer <- explain_tidymodels(
+  final_fit
+)
+
+# Variable Importance Plots
+vip_plot <- variable_importance(hi100_explainer)
+plot(vip_plot)
+
+# Partial dependence plots
+pdp_prop <- model_profile(hi100_explainer, 
+                          variables = "prop_extent_treated", 
+                          N = NULL)
+
+plot(pdp_prop)
+```
+
+
 
 ```{r}
 rf_xy_fit_hi100 <- 
@@ -136,8 +257,7 @@ hi100_explainer <- explain_tidymodels(
 # Partial dependence plots
 pdp_prop <- model_profile(hi100_explainer, 
                           variables = "prop_extent_treated", 
-                          N = NULL,
-                          groups = "Incid_Name")
+                          N = NULL)
 
 plot(pdp_prop)
 ```
