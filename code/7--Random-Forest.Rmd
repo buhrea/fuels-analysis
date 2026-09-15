@@ -143,7 +143,6 @@ tune_res <- tune_grid(
 #show_notes(.Last.tune.result)
 ```
 
-
 ```{r}
 tune_res %>% 
   collect_metrics() %>%
@@ -187,49 +186,47 @@ regular_res %>%
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
 
-final_rf <- finalize_model(
-  tune_spec,
-  best_rmse
-) 
+# final_rf <- finalize_model(
+#   tune_spec,
+#   best_rmse
+# ) 
 
-final_wf <- finalize_workflow(tune_wf, best_rmse)
-
-final_fit <- last_fit(final_wf, data_split_hi100)
+final_res <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_hi100)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
 collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+
+final_fitted <- final_res$.workflow[[1]]
 ```
 
-Variable Importance Plot
+Explainer
 ```{r}
 hi100_explainer <- explain_tidymodels(
-  final_fit
+  final_fitted,
+  data = hi100_train %>% st_drop_geometry() %>% dplyr::select(-prop_high_sev),
+  y = hi100_train$prop_high_sev,
+  verbose = FALSE
 )
-
-# Variable Importance Plots
-vip_plot <- variable_importance(hi100_explainer)
-plot(vip_plot)
-
-# Partial dependence plots
-pdp_prop <- model_profile(hi100_explainer, 
-                          variables = "prop_extent_treated", 
-                          N = NULL)
-
-plot(pdp_prop)
 ```
 
-
-
+PDP
 ```{r}
-rf_xy_fit_hi100 <- 
-  rf_defaults %>%
-  set_engine("ranger") %>%
-  fit_xy(
-    x = hi100_train[, preds],
-    y = hi100_train$prop_high_sev
-  )
+pdp_extent <- model_profile(
+  hi100_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent)
+```
 
-rf_xy_fit_hi100
+Variable Importance Plot - needs troubleshooting
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(hi100_explainer)
+plot(vip_plot) #why does this have all variables
 ```
 
 ```{r}
@@ -237,7 +234,7 @@ test_results_hi100 <-
   hi100_test %>%
   select(prop_high_sev) %>%
   bind_cols(
-    predict(rf_xy_fit_hi100, new_data = hi100_test[, preds])
+    predict(final_fitted, new_data = hi100_test[, preds])
   )
 test_results_hi100 %>% slice(1:5)
 
@@ -245,24 +242,152 @@ test_results_hi100 %>% slice(1:5)
 test_results_hi100 %>% metrics(truth = prop_high_sev, estimate = .pred) 
 ```
 
+## 250m
+
 ```{r}
-library(DALEXtra)
-
-hi100_explainer <- explain_tidymodels(
-  rf_xy_fit_hi100,
-  data = dplyr::select(hi100_train, -prop_high_sev),
-  y = hi100_train$prop_high_sev
-)
-
-# Partial dependence plots
-pdp_prop <- model_profile(hi100_explainer, 
-                          variables = "prop_extent_treated", 
-                          N = NULL)
-
-plot(pdp_prop)
+set.seed(123)
+data_split_hi250 <- initial_split(plots_250m, strata = "prop_high_sev", prop = 0.75)
+hi250_train <- training(data_split_hi250)
+hi250_test  <- testing(data_split_hi250)
 ```
 
-## 250m
+Create a recipe
+```{r}
+hi250_rec <- recipe(prop_high_sev ~ PRCP + TMAX + slope + northness + prop_extent_treated + TCC, data = hi250_train)
+
+hi250_prep <- prep(hi250_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(hi250_rec) %>%
+  add_model(tune_spec)
+```
+
+Train hyperparameters 
+```{r}
+set.seed(234)
+hi250_folds <- spatial_block_cv(hi250_train, v = 10)
+#can also use group_vfold_cv, group = "Incid Name" for leave-one-out cross validation. use spatial_block_cv otherwise (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = hi250_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = hi250_folds,
+  grid = rf_grid
+)
+
+regular_res
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+# final_rf <- finalize_model(
+#   tune_spec,
+#   best_rmse
+# ) 
+
+final_res <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_hi250)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+
+final_fitted <- final_res$.workflow[[1]]
+```
+
+Explainer
+```{r}
+hi250_explainer <- explain_tidymodels(
+  final_fitted,
+  data = hi250_train %>% st_drop_geometry() %>% dplyr::select(-prop_high_sev),
+  y = hi250_train$prop_high_sev,
+  verbose = FALSE
+)
+```
+
+PDP
+```{r}
+pdp_extent <- model_profile(
+  hi250_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent)
+```
+
+Variable Importance Plot - needs troubleshooting
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(hi250_explainer)
+plot(vip_plot) #why does this have all variables
+```
+
+```{r}
+test_results_hi250 <- 
+  hi250_test %>%
+  select(prop_high_sev) %>%
+  bind_cols(
+    predict(final_fitted, new_data = hi250_test[, preds])
+  )
+test_results_hi250 %>% slice(1:5)
+
+# summarize performance
+test_results_hi250 %>% metrics(truth = prop_high_sev, estimate = .pred) 
+```
 
 ## 500m
 
