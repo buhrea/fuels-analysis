@@ -33,7 +33,8 @@ library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 # Load Data
 
 ```{r}
-plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") 
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
+  st_drop_geometry()
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
 
@@ -46,50 +47,22 @@ plots_250m <- filter(plots, buffer_radius == 250)
 plots_500m <- filter(plots, buffer_radius == 500)
 ```
 
-# Correlation of Predictor Variables
-
-VIF and linear correlation
-
-```{r}
-model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + TMIN + TOTAL_COUNT + prop_Rearrangement + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
-
-vif(model)
-
-#removing individual treatment types and individual EVTs
-model2 <- lm(prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TMIN + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa, data = plots)
-
-vif(model2)
-
-#Correlation matrix
-plots_corr <- plots %>% st_drop_geometry()
-cor_matrix <- cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir")], use = "complete.obs")
-
-# turn into long format, drop diagonal and duplicate pairs
-cor_df <- as.data.frame(as.table(cor_matrix))
-names(cor_df) <- c("var1", "var2", "cor")
-
-cor_df <- cor_df %>%
-  filter(var1 != var2) %>%
-  mutate(pair = paste(pmin(as.character(var1), as.character(var2)),
-                       pmax(as.character(var1), as.character(var2)))) %>%
-  distinct(pair, .keep_all = TRUE) %>%
-  filter(abs(cor) > 0.5) %>%
-  arrange(desc(abs(cor))) %>%
-  select(var1, var2, cor)
-
-print(cor_df)
-```
-
 # Random Forest Settings
 
 ```{r}
-rf_defaults <- rand_forest(mode = "regression",  
-                           mtry = tune(), 
-                           trees = 2000,
-                           min_n = tune())
-rf_defaults
+preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC")
 
-#preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Incid_Name")
+hi_formula <- as.formula(paste(
+  "prop_high_sev",
+  "~",
+  paste(preds, collapse = " + ")
+))
+
+mohi_formula <- as.formula(paste(
+  "prop_mod_high_sev",
+  "~",
+  paste(preds, collapse = " + ")
+))
 ```
 
 
@@ -106,7 +79,7 @@ hi100_test  <- testing(data_split_hi100)
 
 Create a recipe
 ```{r}
-hi100_rec <- recipe(prop_high_sev ~ PRCP + TMAX + slope + northness + prop_extent_treated + TCC, data = hi100_train)
+hi100_rec <- recipe(formula, data = hi100_train)
 
 hi100_prep <- prep(hi100_rec)
 ```
@@ -117,7 +90,7 @@ tune_spec <- rand_forest(mtry = tune(),
                          trees = 2000,
                          min_n = tune()) %>%
               set_mode("regression") %>%
-              set_engine("ranger")
+              set_engine("ranger", importance = "impurity")
 ```
 
 Set up a workflow
@@ -130,8 +103,8 @@ tune_wf <- workflow() %>%
 Train hyperparameters 
 ```{r}
 set.seed(234)
-hi100_folds <- spatial_block_cv(hi100_train, v = 10)
-#can also use group_vfold_cv, group = "Incid Name" for leave-one-out cross validation. use spatial_block_cv otherwise (needs geometry)
+hi100_folds <- group_vfold_cv(hi100_train, group= "Incid_Name")
+#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
 doParallel::registerDoParallel()
 set.seed(345)
@@ -191,21 +164,31 @@ best_rmse <- select_best(regular_res, metric = "rmse")
 #   best_rmse
 # ) 
 
-final_res <- tune_wf %>%
+final_fit <- tune_wf %>%
   finalize_workflow(best_rmse) %>%
   last_fit(data_split_hi100)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
-collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+hi100_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+ggplot(hi100_predictions, aes(prop_high_sev, .pred)) +
+  geom_point(alpha = 0.25)+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    x = "Proportion of High Severity Fire",
+    y = "Predicted",
+    color = NULL,
+    title = "Observed vs. Predicted, 100 m"
+  )
 
-final_fitted <- final_res$.workflow[[1]]
+final_fitted <- final_fit$.workflow[[1]]
+final_fitted
 ```
 
 Explainer
 ```{r}
 hi100_explainer <- explain_tidymodels(
   final_fitted,
-  data = hi100_train %>% st_drop_geometry() %>% dplyr::select(-prop_high_sev),
+  data = hi100_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = hi100_train$prop_high_sev,
   verbose = FALSE
 )
@@ -222,13 +205,14 @@ pdp_extent <- model_profile(
 plot(pdp_extent)
 ```
 
-Variable Importance Plot - needs troubleshooting
+Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
 vip_plot <- variable_importance(hi100_explainer)
-plot(vip_plot) #why does this have all variables
+plot(vip_plot) 
 ```
 
+Summarize performance predicting to testing data
 ```{r}
 test_results_hi100 <- 
   hi100_test %>%
@@ -242,152 +226,13 @@ test_results_hi100 %>% slice(1:5)
 test_results_hi100 %>% metrics(truth = prop_high_sev, estimate = .pred) 
 ```
 
+Shaply Plots
+```{r}
+shap_plots <- predict_parts(hi100_explainer, hi100_test[96, ], type = 'shap')
+plot(shap_plots)
+```
+
 ## 250m
-
-```{r}
-set.seed(123)
-data_split_hi250 <- initial_split(plots_250m, strata = "prop_high_sev", prop = 0.75)
-hi250_train <- training(data_split_hi250)
-hi250_test  <- testing(data_split_hi250)
-```
-
-Create a recipe
-```{r}
-hi250_rec <- recipe(prop_high_sev ~ PRCP + TMAX + slope + northness + prop_extent_treated + TCC, data = hi250_train)
-
-hi250_prep <- prep(hi250_rec)
-```
-
-Set up a model specification to tune
-```{r}
-tune_spec <- rand_forest(mtry = tune(), 
-                         trees = 2000,
-                         min_n = tune()) %>%
-              set_mode("regression") %>%
-              set_engine("ranger")
-```
-
-Set up a workflow
-```{r}
-tune_wf <- workflow() %>%
-  add_recipe(hi250_rec) %>%
-  add_model(tune_spec)
-```
-
-Train hyperparameters 
-```{r}
-set.seed(234)
-hi250_folds <- spatial_block_cv(hi250_train, v = 10)
-#can also use group_vfold_cv, group = "Incid Name" for leave-one-out cross validation. use spatial_block_cv otherwise (needs geometry)
-
-doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = hi250_folds,
-  grid = 20
-)
-#show_notes(.Last.tune.result)
-```
-
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
-rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
-  min_n(range = c(1,40)),
-  levels = 5
-)
-
-set.seed(456)
-regular_res <- tune_grid(
-  tune_wf,
-  resamples = hi250_folds,
-  grid = rf_grid
-)
-
-regular_res
-```
-
-```{r}
-regular_res %>%
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  mutate(min_n = factor(min_n)) %>%
-  ggplot(aes(mtry, mean, color = min_n)) +
-  geom_line(alpha = 0.5, size = 1.5) +
-  geom_point()
-```
-
-```{r}
-best_rmse <- select_best(regular_res, metric = "rmse")
-
-# final_rf <- finalize_model(
-#   tune_spec,
-#   best_rmse
-# ) 
-
-final_res <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
-  last_fit(data_split_hi250)
-
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
-
-final_fitted <- final_res$.workflow[[1]]
-```
-
-Explainer
-```{r}
-hi250_explainer <- explain_tidymodels(
-  final_fitted,
-  data = hi250_train %>% st_drop_geometry() %>% dplyr::select(-prop_high_sev),
-  y = hi250_train$prop_high_sev,
-  verbose = FALSE
-)
-```
-
-PDP
-```{r}
-pdp_extent <- model_profile(
-  hi250_explainer,
-  variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
-)
-plot(pdp_extent)
-```
-
-Variable Importance Plot - needs troubleshooting
-```{r}
-# Variable Importance Plots
-vip_plot <- variable_importance(hi250_explainer)
-plot(vip_plot) #why does this have all variables
-```
-
-```{r}
-test_results_hi250 <- 
-  hi250_test %>%
-  select(prop_high_sev) %>%
-  bind_cols(
-    predict(final_fitted, new_data = hi250_test[, preds])
-  )
-test_results_hi250 %>% slice(1:5)
-
-# summarize performance
-test_results_hi250 %>% metrics(truth = prop_high_sev, estimate = .pred) 
-```
 
 ## 500m
 
@@ -398,286 +243,3 @@ test_results_hi250 %>% metrics(truth = prop_high_sev, estimate = .pred)
 ## 250m
 
 ## 500m
-
-
-# Random Forest - Prop high severity
-
-```{r}
-# Prepare and split data (80% Train, 20% Test)
-set.seed(123) # Ensures identical bootstrap results
-index <- sample(1:nrow(plots), 0.8 * nrow(plots))
-train_data <- plots[index, ]
-test_data  <- plots[-index, ]
-
-# Fit the model 
-high_model <- randomForest(
-  prop_high_sev ~ northness + eastness + slope + PRCP + TMAX + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,   
-  data = train_data,    # Training dataset
-  ntree = 500,          # Total decision trees grown
-  mtry = 2,             # Features split per node
-  importance = TRUE     # Evaluates feature impact
-)
-
-# Print out-of-bag (OOB) error summary
-print(high_model)
-
-# Generate predictions on test data
-predictions <- predict(high_model, newdata = test_data)
-
-# Calculate Regression Evaluation Metrics
-actuals <- test_data$prop_high_sev
-
-# 1. Root Mean Squared Error (Average prediction error size)
-rmse <- sqrt(mean((actuals - predictions)^2))
-cat("Test RMSE:", round(rmse, 4), "\n")
-
-# 2. R-squared on Test Data (Proportion of variance explained)
-r2 <- 1 - (sum((actuals - predictions)^2) / sum((actuals - mean(actuals))^2))
-cat("Test R-squared:", round(r2, 4), "\n")
-
-```
-
-# Plots - high severity
-
-```{r}
-plot(high_model)
-importance(high_model)
-varImpPlot(high_model)
-```
-
-Partial dependence plots
-
-```{r}
-clean_train <- as.data.frame(train_data)
-
-# 2. Extract all predictor names directly from your randomForest model object
-# This prevents you from having to type out all 15 variable names manually
-predictors <- rownames(high_model$importance)
-
-# 3. Create a folder to store the plots (if it doesn't already exist)
-output_dir <- "documents/pdp_plots"
-if(!dir.exists(output_dir)) {
-  dir.create(output_dir)
-}
-
-# 4. Loop through each variable, generate the PDP, and save it
-for (var_name in predictors) {
-  
-  # Compute partial dependence using the clean data frame
-  pdp_data <- partial(
-    high_model, 
-    pred.var = var_name, 
-    train = clean_train
-  )
-  
-  # Build a clean ggplot2 visualization
-  p <- autoplot(pdp_data) + 
-    labs(
-      title = paste("Partial Dependence Plot:", var_name),
-      x = var_name,
-      y = "Predicted prop_high_sev"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(size = 11)
-    )
-  
-  # Construct a safe filename (e.g., pdp_plots/pdp_elevation.png)
-  file_path <- file.path(output_dir, paste0(var_name, "hi_pdp", ".png"))
-  
-  # Save the plot with professional dimensions
-  ggsave(
-    filename = file_path, 
-    plot = p, 
-    width = 6, 
-    height = 4.5, 
-    dpi = 300
-  )
-}
-```
-
-# Random Forest - Prop mod-high severity
-
-```{r}
-# Prepare and split data (80% Train, 20% Test)
-set.seed(123) # Ensures identical bootstrap results
-index <- sample(1:nrow(plots), 0.8 * nrow(plots))
-train_data <- plots[index, ]
-test_data  <- plots[-index, ]
-
-# Fit the model 
-mohi_model <- randomForest(
-  prop_mod_high_sev ~ northness + eastness + slope + TMAX + PRCP + TOTAL_COUNT + prop_extent_treated + TCC + Event_ID,          # Formula: target ~ predictors
-  data = train_data,    # Training dataset
-  ntree = 500,          # Total decision trees grown
-  mtry = 2,             # Features split per node
-  importance = TRUE     # Evaluates feature impact
-)
-
-# Print out-of-bag (OOB) error summary
-print(mohi_model)
-
-# Generate predictions on test data
-predictions <- predict(mohi_model, newdata = test_data)
-
-# Calculate Regression Evaluation Metrics
-actuals <- test_data$prop_mod_high_sev
-
-# 1. Root Mean Squared Error (Average prediction error size)
-rmse <- sqrt(mean((actuals - predictions)^2))
-cat("Test RMSE:", round(rmse, 4), "\n")
-
-# 2. R-squared on Test Data (Proportion of variance explained)
-r2 <- 1 - (sum((actuals - predictions)^2) / sum((actuals - mean(actuals))^2))
-cat("Test R-squared:", round(r2, 4), "\n")
-
-```
-
-# Plots - mod-high severity
-
-```{r}
-plot(mohi_model)
-importance(mohi_model)
-varImpPlot(mohi_model)
-```
-
-Partial dependence plots
-
-```{r}
-clean_train <- as.data.frame(train_data)
-
-# 2. Extract all predictor names directly from your randomForest model object
-# This prevents you from having to type out all 15 variable names manually
-predictors <- rownames(mohi_model$importance)
-
-# 3. Create a folder to store the plots (if it doesn't already exist)
-output_dir <- "documents/pdp_plots"
-if(!dir.exists(output_dir)) {
-  dir.create(output_dir)
-}
-
-# 4. Loop through each variable, generate the PDP, and save it
-for (var_name in predictors) {
-  
-  # Compute partial dependence using the clean data frame
-  pdp_data <- partial(
-    mohi_model, 
-    pred.var = var_name, 
-    train = clean_train
-  )
-  
-  # Build a clean ggplot2 visualization
-  p <- autoplot(pdp_data) + 
-    labs(
-      title = paste("Partial Dependence Plot:", var_name),
-      x = var_name,
-      y = "Predicted prop_mod_high_sev"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(face = "bold", size = 14),
-      axis.title = element_text(size = 11)
-    )
-  
-  # Construct a safe filename (e.g., pdp_plots/pdp_elevation.png)
-  file_path <- file.path(output_dir, paste0(var_name, "mohi_pdp",".png"))
-  
-  # Save the plot with professional dimensions
-  ggsave(
-    filename = file_path, 
-    plot = p, 
-    width = 6, 
-    height = 4.5, 
-    dpi = 300
-  )
-}
-```
-
-# Try tidymodels format
-
-```{r}
-library("glmnet")
-library("randomForest")
-library("ranger")
-library("tidymodels")
-
-set.seed(4595)
-data_split <- initial_split(plots, strata = "prop_high_sev", prop = 0.75)
-
-hi_train <- training(data_split)
-hi_test  <- testing(data_split)
-
-data_split2 <- initial_split(plots, strata = "prop_mod_high_sev", prop = 0.75)
-
-mohi_train <- training(data_split2)
-mohi_test  <- testing(data_split2)
-```
-
-## High-severity model
-
-```{r}
-rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 2000)
-rf_defaults
-```
-
-```{r}
-preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Event_ID")
-
-rf_xy_fit <- 
-  rf_defaults |>
-  set_engine("ranger") |>
-  fit_xy(
-    x = hi_train[, preds],
-    y = hi_train$prop_high_sev
-  )
-
-rf_xy_fit
-```
-
-```{r}
-test_results <- 
-  hi_test |>
-  select(prop_high_sev) |>
-  bind_cols(
-    predict(rf_xy_fit, new_data = hi_test[, preds])
-  )
-test_results |> slice(1:5)
-
-# summarize performance
-test_results |> metrics(truth = prop_high_sev, estimate = .pred) 
-```
-
-## Moderate to High-severity model
-
-```{r}
-rf_defaults <- rand_forest(mode = "regression",  mtry = .preds(), trees = 2000, min_n = 20)
-rf_defaults
-```
-
-```{r}
-preds <- c("northness", "eastness", "slope", "PRCP", "TMAX", "TOTAL_COUNT", "prop_extent_treated",  "TCC", "Event_ID")
-
-rf_xy_fit <- 
-  rf_defaults |>
-  set_engine("ranger") |>
-  fit_xy(
-    x = mohi_train[, preds],
-    y = mohi_train$prop_mod_high_sev
-  )
-
-rf_xy_fit
-```
-
-```{r}
-test_results <- 
-  hi_test |>
-  select(prop_mod_high_sev) |>
-  bind_cols(
-    predict(rf_xy_fit, new_data = mohi_test[, preds])
-  )
-test_results |> slice(1:5)
-
-# summarize performance
-test_results |> metrics(truth = prop_mod_high_sev, estimate = .pred) 
-```
