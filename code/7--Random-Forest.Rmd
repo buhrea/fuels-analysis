@@ -5,11 +5,11 @@ date: "`r Sys.Date()`"
 output:
   html_document:
     df_print: paged
+  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 5, fig.height = 4, tidy = TRUE)
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, tidy = TRUE)
 ```
 
 # Load Packages
@@ -17,22 +17,15 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width 
 ```{r}
 library(tidyverse)
 library(sf)
-library(car)
-library(corrplot)
-library(randomForest)
-library(patchwork)
-library(pdp)
 library(here)
-library(glmnet)
 library(ranger)
 library(tidymodels)
-library(spatialsample) #Spatial Crossvalidation
 library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 ```
 
 # Load Data
 
-```{r}
+```{r, results = FALSE}
 plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
   st_drop_geometry()
 plots$northness[is.na(plots$northness)] <- 0
@@ -45,28 +38,11 @@ plots <- plots %>%
 plots_100m <- filter(plots, buffer_radius == 100)
 plots_250m <- filter(plots, buffer_radius == 250)
 plots_500m <- filter(plots, buffer_radius == 500)
+
+preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC") #For use later in VIPs
 ```
 
-# Random Forest Settings
-
-```{r}
-preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC")
-
-hi_formula <- as.formula(paste(
-  "prop_high_sev",
-  "~",
-  paste(preds, collapse = " + ")
-))
-
-mohi_formula <- as.formula(paste(
-  "prop_mod_high_sev",
-  "~",
-  paste(preds, collapse = " + ")
-))
-```
-
-
-# High-severity proportion
+# Proportion of High-Severity
 
 ## 100m
 
@@ -79,7 +55,7 @@ hi100_test  <- testing(data_split_hi100)
 
 Create a recipe
 ```{r}
-hi100_rec <- recipe(formula, data = hi100_train)
+hi100_rec <- recipe(prop_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = hi100_train)
 
 hi100_prep <- prep(hi100_rec)
 ```
@@ -90,7 +66,7 @@ tune_spec <- rand_forest(mtry = tune(),
                          trees = 2000,
                          min_n = tune()) %>%
               set_mode("regression") %>%
-              set_engine("ranger", importance = "impurity")
+              set_engine("ranger", importance = "permutation")
 ```
 
 Set up a workflow
@@ -100,7 +76,7 @@ tune_wf <- workflow() %>%
   add_model(tune_spec)
 ```
 
-Train hyperparameters 
+Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
 hi100_folds <- group_vfold_cv(hi100_train, group= "Incid_Name")
@@ -142,8 +118,6 @@ regular_res <- tune_grid(
   resamples = hi100_folds,
   grid = rf_grid
 )
-
-regular_res
 ```
 
 ```{r}
@@ -156,16 +130,42 @@ regular_res %>%
   geom_point()
 ```
 
+Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
+final_workflow <- tune_wf %>%
+  finalize_workflow(best_rmse)
+```
 
-# final_rf <- finalize_model(
-#   tune_spec,
-#   best_rmse
-# ) 
+Evaluate metrics across spatial crossvalidation folds
+```{r}
+rf_res <- 
+    final_workflow %>% 
+    fit_resamples(
+      resamples = hi100_folds, 
+      metrics = metric_set(rmse, rsq),
+      control = control_resamples(save_pred = TRUE)
+      ) 
+  
+rf_res %>%  
+  collect_metrics(summarize = TRUE) %>%
+  mutate(Dataset="training") %>% 
+  mutate(Model="RF") 
 
-final_fit <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  filter(.metric == "rsq") %>%
+  arrange(is.na(.estimate))
+
+hi100_folds %>% 
+  mutate(held_out_fire = map(splits, ~ assessment(.x) %>% distinct(Incid_Name))) %>% 
+  unnest(held_out_fire) %>% 
+  select(id, Incid_Name)
+```
+
+Fit Final Model
+```{r}
+final_fit <- final_workflow %>%
   last_fit(data_split_hi100)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
@@ -194,39 +194,33 @@ hi100_explainer <- explain_tidymodels(
 )
 ```
 
+Variable Importance Plot 
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(hi100_explainer,
+                                variables = preds)
+plot(vip_plot) 
+```
+
 PDP
 ```{r}
 pdp_extent <- model_profile(
   hi100_explainer,
   variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_extent)
+
+pdp_extent_groups <- model_profile(
+  hi100_explainer,
+  variables = "prop_extent_treated",
   N = NULL,
   groups="Incid_Name"
 )
-plot(pdp_extent)
+plot(pdp_extent_groups)
 ```
 
-Variable Importance Plot 
-```{r}
-# Variable Importance Plots
-vip_plot <- variable_importance(hi100_explainer)
-plot(vip_plot) 
-```
-
-Summarize performance predicting to testing data
-```{r}
-test_results_hi100 <- 
-  hi100_test %>%
-  select(prop_high_sev) %>%
-  bind_cols(
-    predict(final_fitted, new_data = hi100_test[, preds])
-  )
-test_results_hi100 %>% slice(1:5)
-
-# summarize performance
-test_results_hi100 %>% metrics(truth = prop_high_sev, estimate = .pred) 
-```
-
-Shaply Plots
+Shaply Plot - just for fun
 ```{r}
 shap_plots <- predict_parts(hi100_explainer, hi100_test[96, ], type = 'shap')
 plot(shap_plots)
@@ -234,12 +228,731 @@ plot(shap_plots)
 
 ## 250m
 
+```{r}
+set.seed(123)
+data_split_hi250 <- initial_split(plots_250m, strata = "prop_high_sev", prop = 0.75)
+hi250_train <- training(data_split_hi250)
+hi250_test  <- testing(data_split_hi250)
+```
+
+Create a recipe
+```{r}
+hi250_rec <- recipe(prop_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = hi250_train)
+
+hi250_prep <- prep(hi250_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger", importance = "permutation")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(hi250_rec) %>%
+  add_model(tune_spec)
+```
+
+Tune hyperparameters based on RMSE
+```{r}
+set.seed(234)
+hi250_folds <- group_vfold_cv(hi250_train, group= "Incid_Name")
+#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = hi250_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = hi250_folds,
+  grid = rf_grid
+)
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+Select Best Fit
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+final_fit <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_hi250)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+hi250_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+ggplot(hi250_predictions, aes(prop_high_sev, .pred)) +
+  geom_point(alpha = 0.25)+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    x = "Proportion of High Severity Fire",
+    y = "Predicted",
+    color = NULL,
+    title = "Observed vs. Predicted, 250 m"
+  )
+
+final_fitted <- final_fit$.workflow[[1]]
+final_fitted
+```
+
+Explainer
+```{r}
+hi250_explainer <- explain_tidymodels(
+  final_fitted,
+  data = hi250_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
+  y = hi250_train$prop_high_sev,
+  verbose = FALSE
+)
+```
+
+Variable Importance Plot 
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(hi250_explainer,
+                                variables = preds)
+plot(vip_plot) 
+```
+
+PDP
+```{r}
+pdp_extent <- model_profile(
+  hi250_explainer,
+  variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_extent)
+
+pdp_extent_groups <- model_profile(
+  hi250_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent_groups)
+```
+
 ## 500m
 
-# Moderate to High-severity proportion
+```{r}
+set.seed(123)
+data_split_hi500 <- initial_split(plots_500m, strata = "prop_high_sev", prop = 0.75)
+hi500_train <- training(data_split_hi500)
+hi500_test  <- testing(data_split_hi500)
+```
+
+Create a recipe
+```{r}
+hi500_rec <- recipe(prop_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = hi500_train)
+
+hi500_prep <- prep(hi500_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger", importance = "permutation")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(hi500_rec) %>%
+  add_model(tune_spec)
+```
+
+Tune hyperparameters based on RMSE
+```{r}
+set.seed(234)
+hi500_folds <- group_vfold_cv(hi500_train, group= "Incid_Name")
+#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = hi500_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = hi500_folds,
+  grid = rf_grid
+)
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+Select Best Fit
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+final_fit <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_hi500)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+hi500_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+ggplot(hi500_predictions, aes(prop_high_sev, .pred)) +
+  geom_point(alpha = 0.25)+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    x = "Proportion of High Severity Fire",
+    y = "Predicted",
+    color = NULL,
+    title = "Observed vs. Predicted, 500 m"
+  )
+
+final_fitted <- final_fit$.workflow[[1]]
+final_fitted
+```
+
+Explainer
+```{r}
+hi500_explainer <- explain_tidymodels(
+  final_fitted,
+  data = hi500_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
+  y = hi500_train$prop_high_sev,
+  verbose = FALSE
+)
+```
+
+Variable Importance Plot 
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(hi500_explainer,
+                                variables = preds)
+plot(vip_plot) 
+```
+
+PDP
+```{r}
+pdp_extent <- model_profile(
+  hi500_explainer,
+  variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_extent)
+
+pdp_extent_groups <- model_profile(
+  hi500_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent_groups)
+```
+
+# Proportion of Moderate to High-severity
 
 ## 100m
+```{r}
+set.seed(123)
+data_split_mohi100 <- initial_split(plots_100m, strata = "prop_mod_high_sev", prop = 0.75)
+mohi100_train <- training(data_split_mohi100)
+mohi100_test  <- testing(data_split_mohi100)
+```
+
+Create a recipe
+```{r}
+mohi100_rec <- recipe(prop_mod_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = mohi100_train)
+
+mohi100_prep <- prep(mohi100_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger", importance = "permutation")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(mohi100_rec) %>%
+  add_model(tune_spec)
+```
+
+Tune hyperparameters based on RMSE
+```{r}
+set.seed(234)
+mohi100_folds <- group_vfold_cv(mohi100_train, group= "Incid_Name")
+#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = mohi100_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = mohi100_folds,
+  grid = rf_grid
+)
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+Select Best Fit
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+final_fit <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_mohi100)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+mohi100_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+ggplot(mohi100_predictions, aes(prop_mod_high_sev, .pred)) +
+  geom_point(alpha = 0.25)+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    x = "Proportion of Moderate or High Severity Fire",
+    y = "Predicted",
+    color = NULL,
+    title = "Observed vs. Predicted, 100 m"
+  )
+
+final_fitted <- final_fit$.workflow[[1]]
+final_fitted
+```
+
+Explainer
+```{r}
+mohi100_explainer <- explain_tidymodels(
+  final_fitted,
+  data = mohi100_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
+  y = mohi100_train$prop_mod_high_sev,
+  verbose = FALSE
+)
+```
+
+Variable Importance Plot 
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(mohi100_explainer,
+                                variables = preds)
+plot(vip_plot) 
+```
+
+PDP
+```{r}
+pdp_extent <- model_profile(
+  mohi100_explainer,
+  variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_extent)
+
+pdp_extent_groups <- model_profile(
+  mohi100_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent_groups)
+```
 
 ## 250m
 
+```{r}
+set.seed(123)
+data_split_mohi250 <- initial_split(plots_250m, strata = "prop_mod_high_sev", prop = 0.75)
+mohi250_train <- training(data_split_mohi250)
+mohi250_test  <- testing(data_split_mohi250)
+```
+
+Create a recipe
+```{r}
+mohi250_rec <- recipe(prop_mod_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = mohi250_train)
+
+mohi250_prep <- prep(mohi250_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger", importance = "permutation")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(mohi250_rec) %>%
+  add_model(tune_spec)
+```
+
+Tune hyperparameters based on RMSE
+```{r}
+set.seed(234)
+mohi250_folds <- group_vfold_cv(mohi250_train, group= "Incid_Name")
+#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = mohi250_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = mohi250_folds,
+  grid = rf_grid
+)
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+Select Best Fit
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+final_fit <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_mohi250)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+mohi250_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+ggplot(mohi250_predictions, aes(prop_mod_high_sev, .pred)) +
+  geom_point(alpha = 0.25)+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    x = "Proportion of Moderate or High Severity Fire",
+    y = "Predicted",
+    color = NULL,
+    title = "Observed vs. Predicted, 250 m"
+  )
+
+final_fitted <- final_fit$.workflow[[1]]
+final_fitted
+```
+
+Explainer
+```{r}
+mohi250_explainer <- explain_tidymodels(
+  final_fitted,
+  data = mohi250_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
+  y = mohi250_train$prop_mod_high_sev,
+  verbose = FALSE
+)
+```
+
+Variable Importance Plot 
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(mohi250_explainer,
+                                variables = preds)
+plot(vip_plot) 
+```
+
+PDP
+```{r}
+pdp_extent <- model_profile(
+  mohi250_explainer,
+  variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_extent)
+
+pdp_extent_groups <- model_profile(
+  mohi250_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent_groups)
+```
+
 ## 500m
+
+```{r}
+set.seed(123)
+data_split_mohi500 <- initial_split(plots_500m, strata = "prop_mod_high_sev", prop = 0.75)
+mohi500_train <- training(data_split_mohi500)
+mohi500_test  <- testing(data_split_mohi500)
+```
+
+Create a recipe
+```{r}
+mohi500_rec <- recipe(prop_mod_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = mohi500_train)
+
+mohi500_prep <- prep(mohi500_rec)
+```
+
+Set up a model specification to tune
+```{r}
+tune_spec <- rand_forest(mtry = tune(), 
+                         trees = 2000,
+                         min_n = tune()) %>%
+              set_mode("regression") %>%
+              set_engine("ranger", importance = "permutation")
+```
+
+Set up a workflow
+```{r}
+tune_wf <- workflow() %>%
+  add_recipe(mohi500_rec) %>%
+  add_model(tune_spec)
+```
+
+Tune hyperparameters based on RMSE
+```{r}
+set.seed(234)
+mohi500_folds <- group_vfold_cv(mohi500_train, group= "Incid_Name")
+#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+
+doParallel::registerDoParallel()
+set.seed(345)
+tune_res <- tune_grid(
+  tune_wf,
+  resamples = mohi500_folds,
+  grid = 20
+)
+#show_notes(.Last.tune.result)
+```
+
+```{r}
+tune_res %>% 
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  select(mean, min_n, mtry) %>%
+  pivot_longer(min_n:mtry,
+               values_to = "value",
+               names_to = "parameter") %>%
+  ggplot(aes(value, mean, color = parameter)) +
+  geom_point(show.legend = FALSE) +
+  facet_wrap(~ parameter, scales = "free_x")
+```
+
+```{r}
+rf_grid <- grid_regular(
+  mtry(range = c(1, 6)),
+  min_n(range = c(1,40)),
+  levels = 5
+)
+
+set.seed(456)
+regular_res <- tune_grid(
+  tune_wf,
+  resamples = mohi500_folds,
+  grid = rf_grid
+)
+```
+
+```{r}
+regular_res %>%
+  collect_metrics() %>%
+  filter(.metric == "rmse") %>%
+  mutate(min_n = factor(min_n)) %>%
+  ggplot(aes(mtry, mean, color = min_n)) +
+  geom_line(alpha = 0.5, size = 1.5) +
+  geom_point()
+```
+
+Select Best Fit
+```{r}
+best_rmse <- select_best(regular_res, metric = "rmse")
+
+final_fit <- tune_wf %>%
+  finalize_workflow(best_rmse) %>%
+  last_fit(data_split_mohi500)
+
+collect_metrics(final_fit)      # test-set RMSE, R², etc.
+mohi500_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+ggplot(mohi500_predictions, aes(prop_mod_high_sev, .pred)) +
+  geom_point(alpha = 0.25)+
+  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  labs(
+    x = "Proportion of Moderate or High Severity Fire",
+    y = "Predicted",
+    color = NULL,
+    title = "Observed vs. Predicted, 500 m"
+  )
+
+final_fitted <- final_fit$.workflow[[1]]
+final_fitted
+```
+
+Explainer
+```{r}
+mohi500_explainer <- explain_tidymodels(
+  final_fitted,
+  data = mohi500_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
+  y = mohi500_train$prop_mod_high_sev,
+  verbose = FALSE
+)
+```
+
+Variable Importance Plot 
+```{r}
+# Variable Importance Plots
+vip_plot <- variable_importance(mohi500_explainer,
+                                variables = preds)
+plot(vip_plot) 
+```
+
+PDP
+```{r}
+pdp_extent <- model_profile(
+  mohi500_explainer,
+  variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_extent)
+
+pdp_extent_groups <- model_profile(
+  mohi500_explainer,
+  variables = "prop_extent_treated",
+  N = NULL,
+  groups="Incid_Name"
+)
+plot(pdp_extent_groups)
+```
