@@ -40,6 +40,10 @@ plots_250m <- filter(plots, buffer_radius == 250)
 plots_500m <- filter(plots, buffer_radius == 500)
 
 preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC") #For use later in VIPs
+
+plots_100m %>%
+  group_by(Incid_Name) %>%
+  summarize(mean(prop_mod_high_sev))
 ```
 
 # Proportion of High-Severity
@@ -48,7 +52,7 @@ preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC") 
 
 ```{r}
 set.seed(123)
-data_split_hi100 <- initial_split(plots_100m, strata = "prop_high_sev", prop = 0.75)
+data_split_hi100 <- initial_split(plots_100m, strata = "prop_high_sev", prop = 0.80)
 hi100_train <- training(data_split_hi100)
 hi100_test  <- testing(data_split_hi100)
 ```
@@ -82,30 +86,14 @@ set.seed(234)
 hi100_folds <- group_vfold_cv(hi100_train, group= "Incid_Name")
 #can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
+# hi100_folds %>% 
+#   mutate(held_out_fire = map(splits, ~ assessment(.x) %>% distinct(Incid_Name))) %>% 
+#   unnest(held_out_fire) %>% 
+#   select(id, Incid_Name)
+
 doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = hi100_folds,
-  grid = 20
-)
 #show_notes(.Last.tune.result)
-```
 
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
 rf_grid <- grid_regular(
   mtry(range = c(1, 6)),
   min_n(range = c(1,40)),
@@ -118,9 +106,7 @@ regular_res <- tune_grid(
   resamples = hi100_folds,
   grid = rf_grid
 )
-```
 
-```{r}
 regular_res %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
@@ -154,13 +140,7 @@ rf_res %>%
 
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
-  filter(.metric == "rsq") %>%
-  arrange(is.na(.estimate))
-
-hi100_folds %>% 
-  mutate(held_out_fire = map(splits, ~ assessment(.x) %>% distinct(Incid_Name))) %>% 
-  unnest(held_out_fire) %>% 
-  select(id, Incid_Name)
+  filter(.metric == "rmse") 
 ```
 
 Fit Final Model
@@ -172,12 +152,13 @@ collect_metrics(final_fit)      # test-set RMSE, R², etc.
 hi100_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
 ggplot(hi100_predictions, aes(prop_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", color = "black") +
   labs(
-    x = "Proportion of High Severity Fire",
+    x = "Observed",
     y = "Predicted",
     color = NULL,
-    title = "Observed vs. Predicted, 100 m"
+    title = "Observed vs. Predicted Proportion of High Severity Fire, 100 m"
   )
 
 final_fitted <- final_fit$.workflow[[1]]
@@ -197,27 +178,19 @@ hi100_explainer <- explain_tidymodels(
 Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
-vip_plot <- variable_importance(hi100_explainer,
+vip_hi100 <- variable_importance(hi100_explainer,
                                 variables = preds)
-plot(vip_plot) 
+plot(vip_hi100) 
 ```
 
 PDP
 ```{r}
-pdp_extent <- model_profile(
+pdp_hi100 <- model_profile(
   hi100_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
-plot(pdp_extent)
-
-pdp_extent_groups <- model_profile(
-  hi100_explainer,
-  variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
-)
-plot(pdp_extent_groups)
+plot(pdp_hi100)
 ```
 
 Shaply Plot - just for fun
@@ -230,7 +203,7 @@ plot(shap_plots)
 
 ```{r}
 set.seed(123)
-data_split_hi250 <- initial_split(plots_250m, strata = "prop_high_sev", prop = 0.75)
+data_split_hi250 <- initial_split(plots_250m, strata = "prop_high_sev", prop = 0.8)
 hi250_train <- training(data_split_hi250)
 hi250_test  <- testing(data_split_hi250)
 ```
@@ -265,29 +238,8 @@ hi250_folds <- group_vfold_cv(hi250_train, group= "Incid_Name")
 #can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
 doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = hi250_folds,
-  grid = 20
-)
 #show_notes(.Last.tune.result)
-```
 
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
 rf_grid <- grid_regular(
   mtry(range = c(1, 6)),
   min_n(range = c(1,40)),
@@ -300,9 +252,7 @@ regular_res <- tune_grid(
   resamples = hi250_folds,
   grid = rf_grid
 )
-```
 
-```{r}
 regular_res %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
@@ -315,21 +265,46 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
+final_workflow <- tune_wf %>%
+  finalize_workflow(best_rmse)
+```
 
-final_fit <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
+Evaluate metrics across spatial crossvalidation folds
+```{r}
+rf_res <- 
+    final_workflow %>% 
+    fit_resamples(
+      resamples = hi250_folds, 
+      metrics = metric_set(rmse, rsq),
+      control = control_resamples(save_pred = TRUE)
+      ) 
+  
+rf_res %>%  
+  collect_metrics(summarize = TRUE) %>%
+  mutate(Dataset="training") %>% 
+  mutate(Model="RF") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  filter(.metric == "rmse") 
+```
+
+Fit Final Model
+```{r}
+final_fit <- final_workflow %>%
   last_fit(data_split_hi250)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
 hi250_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
 ggplot(hi250_predictions, aes(prop_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", color = "black") +
   labs(
-    x = "Proportion of High Severity Fire",
+    x = "Observed",
     y = "Predicted",
     color = NULL,
-    title = "Observed vs. Predicted, 250 m"
+    title = "Observed vs. Predicted Proportion of High Severity Fire, 250 m"
   )
 
 final_fitted <- final_fit$.workflow[[1]]
@@ -349,34 +324,26 @@ hi250_explainer <- explain_tidymodels(
 Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
-vip_plot <- variable_importance(hi250_explainer,
+vip_hi250 <- variable_importance(hi250_explainer,
                                 variables = preds)
-plot(vip_plot) 
+plot(vip_hi250) 
 ```
 
 PDP
 ```{r}
-pdp_extent <- model_profile(
+pdp_hi250 <- model_profile(
   hi250_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
-plot(pdp_extent)
-
-pdp_extent_groups <- model_profile(
-  hi250_explainer,
-  variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
-)
-plot(pdp_extent_groups)
+plot(pdp_hi250)
 ```
 
 ## 500m
 
 ```{r}
 set.seed(123)
-data_split_hi500 <- initial_split(plots_500m, strata = "prop_high_sev", prop = 0.75)
+data_split_hi500 <- initial_split(plots_500m, strata = "prop_high_sev", prop = 0.8)
 hi500_train <- training(data_split_hi500)
 hi500_test  <- testing(data_split_hi500)
 ```
@@ -411,29 +378,8 @@ hi500_folds <- group_vfold_cv(hi500_train, group= "Incid_Name")
 #can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
 doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = hi500_folds,
-  grid = 20
-)
 #show_notes(.Last.tune.result)
-```
 
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
 rf_grid <- grid_regular(
   mtry(range = c(1, 6)),
   min_n(range = c(1,40)),
@@ -446,9 +392,7 @@ regular_res <- tune_grid(
   resamples = hi500_folds,
   grid = rf_grid
 )
-```
 
-```{r}
 regular_res %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
@@ -461,21 +405,46 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
+final_workflow <- tune_wf %>%
+  finalize_workflow(best_rmse)
+```
 
-final_fit <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
+Evaluate metrics across spatial crossvalidation folds
+```{r}
+rf_res <- 
+    final_workflow %>% 
+    fit_resamples(
+      resamples = hi500_folds, 
+      metrics = metric_set(rmse, rsq),
+      control = control_resamples(save_pred = TRUE)
+      ) 
+  
+rf_res %>%  
+  collect_metrics(summarize = TRUE) %>%
+  mutate(Dataset="training") %>% 
+  mutate(Model="RF") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  filter(.metric == "rmse") 
+```
+
+Fit Final Model
+```{r}
+final_fit <- final_workflow %>%
   last_fit(data_split_hi500)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
 hi500_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
 ggplot(hi500_predictions, aes(prop_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", color = "black") +
   labs(
-    x = "Proportion of High Severity Fire",
+    x = "Observed",
     y = "Predicted",
     color = NULL,
-    title = "Observed vs. Predicted, 500 m"
+    title = "Observed vs. Predicted Proportion of High Severity Fire, 500 m"
   )
 
 final_fitted <- final_fit$.workflow[[1]]
@@ -495,27 +464,19 @@ hi500_explainer <- explain_tidymodels(
 Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
-vip_plot <- variable_importance(hi500_explainer,
+vip_hi500 <- variable_importance(hi500_explainer,
                                 variables = preds)
-plot(vip_plot) 
+plot(vip_hi500) 
 ```
 
 PDP
 ```{r}
-pdp_extent <- model_profile(
+pdp_hi500 <- model_profile(
   hi500_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
-plot(pdp_extent)
-
-pdp_extent_groups <- model_profile(
-  hi500_explainer,
-  variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
-)
-plot(pdp_extent_groups)
+plot(pdp_hi500)
 ```
 
 # Proportion of Moderate to High-severity
@@ -523,7 +484,7 @@ plot(pdp_extent_groups)
 ## 100m
 ```{r}
 set.seed(123)
-data_split_mohi100 <- initial_split(plots_100m, strata = "prop_mod_high_sev", prop = 0.75)
+data_split_mohi100 <- initial_split(plots_100m, strata = "prop_mod_high_sev", prop = 0.8)
 mohi100_train <- training(data_split_mohi100)
 mohi100_test  <- testing(data_split_mohi100)
 ```
@@ -558,29 +519,8 @@ mohi100_folds <- group_vfold_cv(mohi100_train, group= "Incid_Name")
 #can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
 doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = mohi100_folds,
-  grid = 20
-)
 #show_notes(.Last.tune.result)
-```
 
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
 rf_grid <- grid_regular(
   mtry(range = c(1, 6)),
   min_n(range = c(1,40)),
@@ -593,9 +533,7 @@ regular_res <- tune_grid(
   resamples = mohi100_folds,
   grid = rf_grid
 )
-```
 
-```{r}
 regular_res %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
@@ -608,21 +546,46 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
+final_workflow <- tune_wf %>%
+  finalize_workflow(best_rmse)
+```
 
-final_fit <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
+Evaluate metrics across spatial crossvalidation folds
+```{r}
+rf_res <- 
+    final_workflow %>% 
+    fit_resamples(
+      resamples = mohi100_folds, 
+      metrics = metric_set(rmse, rsq),
+      control = control_resamples(save_pred = TRUE)
+      ) 
+  
+rf_res %>%  
+  collect_metrics(summarize = TRUE) %>%
+  mutate(Dataset="training") %>% 
+  mutate(Model="RF") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  filter(.metric == "rsq") 
+```
+
+Fit Final Model
+```{r}
+final_fit <- final_workflow %>%
   last_fit(data_split_mohi100)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
 mohi100_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
 ggplot(mohi100_predictions, aes(prop_mod_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", color = "black") +
   labs(
-    x = "Proportion of Moderate or High Severity Fire",
+    x = "Observed",
     y = "Predicted",
     color = NULL,
-    title = "Observed vs. Predicted, 100 m"
+    title = "Observed vs. Predicted Proportion of Moderate to High Severity Fire, 100 m"
   )
 
 final_fitted <- final_fit$.workflow[[1]]
@@ -642,34 +605,26 @@ mohi100_explainer <- explain_tidymodels(
 Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
-vip_plot <- variable_importance(mohi100_explainer,
+vip_mohi100 <- variable_importance(mohi100_explainer,
                                 variables = preds)
-plot(vip_plot) 
+plot(vip_mohi100) 
 ```
 
 PDP
 ```{r}
-pdp_extent <- model_profile(
+pdp_mohi100 <- model_profile(
   mohi100_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
-plot(pdp_extent)
-
-pdp_extent_groups <- model_profile(
-  mohi100_explainer,
-  variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
-)
-plot(pdp_extent_groups)
+plot(pdp_mohi100)
 ```
 
 ## 250m
 
 ```{r}
 set.seed(123)
-data_split_mohi250 <- initial_split(plots_250m, strata = "prop_mod_high_sev", prop = 0.75)
+data_split_mohi250 <- initial_split(plots_250m, strata = "prop_mod_high_sev", prop = 0.8)
 mohi250_train <- training(data_split_mohi250)
 mohi250_test  <- testing(data_split_mohi250)
 ```
@@ -704,29 +659,8 @@ mohi250_folds <- group_vfold_cv(mohi250_train, group= "Incid_Name")
 #can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
 doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = mohi250_folds,
-  grid = 20
-)
 #show_notes(.Last.tune.result)
-```
 
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
 rf_grid <- grid_regular(
   mtry(range = c(1, 6)),
   min_n(range = c(1,40)),
@@ -739,9 +673,7 @@ regular_res <- tune_grid(
   resamples = mohi250_folds,
   grid = rf_grid
 )
-```
 
-```{r}
 regular_res %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
@@ -754,21 +686,46 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
+final_workflow <- tune_wf %>%
+  finalize_workflow(best_rmse)
+```
 
-final_fit <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
+Evaluate metrics across spatial crossvalidation folds
+```{r}
+rf_res <- 
+    final_workflow %>% 
+    fit_resamples(
+      resamples = mohi250_folds, 
+      metrics = metric_set(rmse, rsq),
+      control = control_resamples(save_pred = TRUE)
+      ) 
+  
+rf_res %>%  
+  collect_metrics(summarize = TRUE) %>%
+  mutate(Dataset="training") %>% 
+  mutate(Model="RF") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  filter(.metric == "rmse") 
+```
+
+Fit Final Model
+```{r}
+final_fit <- final_workflow %>%
   last_fit(data_split_mohi250)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
 mohi250_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
 ggplot(mohi250_predictions, aes(prop_mod_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", color = "black") +
   labs(
-    x = "Proportion of Moderate or High Severity Fire",
+    x = "Observed",
     y = "Predicted",
     color = NULL,
-    title = "Observed vs. Predicted, 250 m"
+    title = "Observed vs. Predicted Proportion of Moderate to High Severity Fire, 250 m"
   )
 
 final_fitted <- final_fit$.workflow[[1]]
@@ -788,34 +745,27 @@ mohi250_explainer <- explain_tidymodels(
 Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
-vip_plot <- variable_importance(mohi250_explainer,
+vip_mohi250 <- variable_importance(mohi250_explainer,
                                 variables = preds)
-plot(vip_plot) 
+plot(vip_mohi250) 
 ```
 
 PDP
 ```{r}
-pdp_extent <- model_profile(
+pdp_mohi250 <- model_profile(
   mohi250_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
-plot(pdp_extent)
-
-pdp_extent_groups <- model_profile(
-  mohi250_explainer,
-  variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
-)
-plot(pdp_extent_groups)
+plot(pdp_mohi250)
 ```
+
 
 ## 500m
 
 ```{r}
 set.seed(123)
-data_split_mohi500 <- initial_split(plots_500m, strata = "prop_mod_high_sev", prop = 0.75)
+data_split_mohi500 <- initial_split(plots_500m, strata = "prop_mod_high_sev", prop = 0.8)
 mohi500_train <- training(data_split_mohi500)
 mohi500_test  <- testing(data_split_mohi500)
 ```
@@ -850,29 +800,8 @@ mohi500_folds <- group_vfold_cv(mohi500_train, group= "Incid_Name")
 #can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
 
 doParallel::registerDoParallel()
-set.seed(345)
-tune_res <- tune_grid(
-  tune_wf,
-  resamples = mohi500_folds,
-  grid = 20
-)
 #show_notes(.Last.tune.result)
-```
 
-```{r}
-tune_res %>% 
-  collect_metrics() %>%
-  filter(.metric == "rmse") %>%
-  select(mean, min_n, mtry) %>%
-  pivot_longer(min_n:mtry,
-               values_to = "value",
-               names_to = "parameter") %>%
-  ggplot(aes(value, mean, color = parameter)) +
-  geom_point(show.legend = FALSE) +
-  facet_wrap(~ parameter, scales = "free_x")
-```
-
-```{r}
 rf_grid <- grid_regular(
   mtry(range = c(1, 6)),
   min_n(range = c(1,40)),
@@ -885,9 +814,7 @@ regular_res <- tune_grid(
   resamples = mohi500_folds,
   grid = rf_grid
 )
-```
 
-```{r}
 regular_res %>%
   collect_metrics() %>%
   filter(.metric == "rmse") %>%
@@ -900,21 +827,46 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
+final_workflow <- tune_wf %>%
+  finalize_workflow(best_rmse)
+```
 
-final_fit <- tune_wf %>%
-  finalize_workflow(best_rmse) %>%
+Evaluate metrics across spatial crossvalidation folds
+```{r}
+rf_res <- 
+    final_workflow %>% 
+    fit_resamples(
+      resamples = mohi500_folds, 
+      metrics = metric_set(rmse, rsq),
+      control = control_resamples(save_pred = TRUE)
+      ) 
+  
+rf_res %>%  
+  collect_metrics(summarize = TRUE) %>%
+  mutate(Dataset="training") %>% 
+  mutate(Model="RF") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  filter(.metric == "rmse") 
+```
+
+Fit Final Model
+```{r}
+final_fit <- final_workflow %>%
   last_fit(data_split_mohi500)
 
 collect_metrics(final_fit)      # test-set RMSE, R², etc.
 mohi500_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
 ggplot(mohi500_predictions, aes(prop_mod_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
-  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "red") +
+  geom_abline(linetype = "dashed", color = "red") +
+  geom_smooth(method = "lm", color = "black") +
   labs(
-    x = "Proportion of Moderate or High Severity Fire",
+    x = "Observed",
     y = "Predicted",
     color = NULL,
-    title = "Observed vs. Predicted, 500 m"
+    title = "Observed vs. Predicted Proportion of Moderate to High Severity Fire, 500 m"
   )
 
 final_fitted <- final_fit$.workflow[[1]]
@@ -934,25 +886,109 @@ mohi500_explainer <- explain_tidymodels(
 Variable Importance Plot 
 ```{r}
 # Variable Importance Plots
-vip_plot <- variable_importance(mohi500_explainer,
+vip_mohi500 <- variable_importance(mohi500_explainer,
                                 variables = preds)
-plot(vip_plot) 
+plot(vip_mohi500) 
 ```
 
 PDP
 ```{r}
-pdp_extent <- model_profile(
+pdp_mohi500 <- model_profile(
   mohi500_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
-plot(pdp_extent)
+plot(pdp_mohi500)
+```
 
-pdp_extent_groups <- model_profile(
+
+# Figures
+
+## Variable Importance, Proportion of High Severity
+
+```{r}
+plot(vip_500, vip_1000, title = "Variable Importance by buffer scale")
+
+plot(vip_plot, max_vars = 15, show_boxplots = FALSE) +
+  ggtitle("Variable Importance, 500 m")
+```
+
+## Partial Dependence Plot, Proportion of High Severity
+
+```{r}
+
+```
+
+## Variable Importance, Proportion of Moderate-High Severity
+
+```{r}
+
+```
+
+## Partial Dependence Plot, Proportion of Moderate-High Severity
+
+```{r}
+
+```
+
+#testing out interaction pdp
+```{r}
+# bin max temp into terciles (adjust name/breaks to your data)
+dat <- mohi500_explainer$data |>
+  mutate(tmax_class = cut(TMAX,
+                          breaks = quantile(TMAX, c(0, 1/3, 2/3, 1), na.rm = TRUE),
+                          labels = c("Low", "Mid", "High"),
+                          include.lowest = TRUE))
+
+mohi500_explainer$data <- dat
+
+pdp_extent_tmax <- model_profile(
   mohi500_explainer,
   variables = "prop_extent_treated",
-  N = NULL,
-  groups="Incid_Name"
+  groups = "tmax_class",
+  N = NULL
 )
-plot(pdp_extent_groups)
+
+plot(pdp_extent_tmax,
+     title = "Effect of treated extent by max temperature",
+     subtitle = "")
 ```
+
+```{r}
+mohi500_explainer$data <- mohi500_explainer$data |>
+  mutate(tmax_class = factor(
+    if_else(TMAX <= median(TMAX, na.rm = TRUE), "Low", "High"),
+    levels = c("Low", "High")
+  ))
+
+pdp_extent_tmax <- model_profile(
+  mohi500_explainer,
+  variables = "prop_extent_treated",
+  groups = "tmax_class",
+  N = NULL
+)
+
+plot(pdp_extent_tmax,
+     title = "Effect of treated extent by max temperature",
+     subtitle = "")
+```
+
+```{r}
+mohi500_explainer$data <- mohi500_explainer$data |>
+  mutate(slope_class = factor(
+    if_else(slope <= median(slope, na.rm = TRUE), "Mild", "Steep"),
+    levels = c("Mild", "Steep")
+  ))
+
+pdp_extent_slope <- model_profile(
+  mohi500_explainer,
+  variables = "prop_extent_treated",
+  groups = "slope_class",
+  N = NULL
+)
+
+plot(pdp_extent_slope,
+     title = "Effect of treated extent by slope",
+     subtitle = "")
+```
+
