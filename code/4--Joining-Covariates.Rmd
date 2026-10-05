@@ -30,6 +30,8 @@ library(sf)
 library(terra)
 library(exactextractr)
 library(appeears) #Nasa Earthdata download
+
+conflicted::conflicts_prefer(terra::extract)
 ```
 
 # Setup
@@ -177,7 +179,7 @@ allplots <- st_transform(allplots, target_crs)
 
 # Topography
 
-Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted into "northness" and "eastness".
+Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted into "northness" and "eastness". TPI is calculated using the "terrain" function from terra.
 
 ## Load data
 
@@ -200,6 +202,8 @@ elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CO
   mask(CO) %>%
   project(target_crs)
 
+tpi <- terrain(elevation, v = "TPI")
+
 slope <- rast("D:/Spatial_Data/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %>%
   crop(CO) %>%
   mask(CO) %>%
@@ -212,10 +216,11 @@ slope <- rast("D:/Spatial_Data/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.
 north_trans <- extract(northness, transects)
 east_trans <- extract(eastness, transects)
 elev_trans <- extract(elevation, transects)
+tpi_trans <- extract(tpi, transects)
 slope_trans <- extract(slope, transects)
 
 transects <- transects %>%
-  cbind(north_trans, east_trans, elev_trans, slope_trans) %>%
+  cbind(north_trans, east_trans, elev_trans, tpi_trans, slope_trans) %>%
   select(-starts_with("ID")) %>%
   rename("northness" = "LF2020_Asp_CONUS",
          "eastness" = "LF2020_Asp_CONUS.1",
@@ -229,10 +234,11 @@ transects <- transects %>%
 north_plots <- extract(northness, allplots, fun = mean)
 east_plots <- extract(eastness, allplots, fun = mean)
 elev_plots <- extract(elevation, allplots, fun = mean)
+tpi_plots <- extract(tpi, allplots, fun = mean)
 slope_plots <- extract(slope, allplots, fun = mean)
 
 allplots <- allplots %>%
-  cbind(north_plots, east_plots, elev_plots, slope_plots) %>%
+  cbind(north_plots, east_plots, elev_plots, tpi_plots, slope_plots) %>%
   select(-starts_with("ID")) %>%
   rename("northness" = "LF2020_Asp_CONUS",
          "eastness" = "LF2020_Asp_CONUS.1",
@@ -380,6 +386,133 @@ allplots <- allplots %>%
          VS_4k = VS,
          VPD_4k = VPD,
          ERC_4k = ERC)
+```
+
+## Load data - TerraClimate
+
+```{r}
+base_path <- "D:/Spatial_Data/TerraClimate"
+```
+
+## Transects Join - TerraClimate
+
+```{r}
+final_data <- NULL
+
+# Loop by Year
+for(yr in unique(transects$year)){
+
+  # Subset points for this year
+  transects_yr <- transects[transects$year == yr, ]
+
+  # Loop through variables
+  for(v in c("CWD", "PDSI")){
+
+    # Map folder name to the prefix
+    prefix <- switch(v, "CWD"="def", "PDSI"="PDSI")
+    file_path <- file.path(base_path, v, paste0("TerraClimate_", prefix, "_", yr, ".nc"))
+
+    # Load the raster cube
+    r <- rast(file_path)
+
+    # Extract all layers for the points in this year
+    ext <- terra::extract(r, vect(transects_yr))
+
+    # Take the value for each point's burn month
+    values_vector <- sapply(1:nrow(transects_yr), function(i) {
+      day_val <- transects_yr$dob[i]
+
+      # Handle cases where dob is NA
+      if(is.na(day_val)) return(NA_real_)
+
+      # Convert day of year to month (1-12)
+      month_val <- as.integer(format(as.Date(day_val - 1, origin = paste0(yr, "-01-01")), "%m"))
+
+      # Month 1 is col 2, month 2 is col 3, etc. (col 1 is the ID)
+      month_col <- month_val + 1
+
+      # Safety check for bounds and missing extraction rows
+      if(month_col > ncol(ext) || month_col < 2) return(NA_real_)
+
+      return(ext[i, month_col])
+    })
+
+    # Add this variable to year-subset
+    transects_yr[[v]] <- values_vector
+  }
+
+  # Bind results
+  final_data <- bind_rows(final_data, st_as_sf(transects_yr))
+}
+
+transects <- final_data
+
+#Reproject transects back to target crs
+transects <- st_transform(transects, target_crs)
+
+transects <- transects %>%
+  rename(CWD_4k = CWD,
+         PDSI_4k = PDSI)
+```
+
+## Plots Join - TerraClimate
+
+```{r}
+final_data <- NULL
+
+# Loop by Year
+for(yr in unique(allplots$year)){
+
+  # Subset points for this year
+  allplots_yr <- allplots[allplots$year == yr, ]
+
+  for(v in c("CWD", "PDSI")){
+
+    # Map folder name to the prefix
+    prefix <- switch(v, "CWD"="def", "PDSI"="PDSI")
+    file_path <- file.path(base_path, v, paste0("TerraClimate_", prefix, "_", yr, ".nc"))
+
+    # Load the raster cube
+    r <- rast(file_path)
+
+    # Extract all layers for the points in this year
+    ext <- terra::extract(r, vect(allplots_yr), fun = mean)
+
+    # Take the value for each point's burn month
+    values_vector <- sapply(1:nrow(allplots_yr), function(i) {
+      day_val <- allplots_yr$dob[i]
+
+      # Handle cases where dob is NA
+      if(is.na(day_val)) return(NA_real_)
+
+      # Convert day of year to month (1-12)
+      month_val <- as.integer(format(as.Date(day_val - 1, origin = paste0(yr, "-01-01")), "%m"))
+
+      # Month 1 is col 2, month 2 is col 3, etc. (col 1 is the ID)
+      month_col <- month_val + 1
+
+      # Safety check for bounds and missing extraction rows
+      if(month_col > ncol(ext) || month_col < 2) return(NA_real_)
+
+      return(ext[i, month_col])
+    })
+
+    # Add this variable to our year-subset
+    allplots_yr[[v]] <- values_vector
+  }
+
+  # 5. Bind results
+  final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
+}
+
+allplots <- final_data
+
+#Reproject transects back to target crs
+allplots <- st_transform(allplots, target_crs)
+
+allplots <- allplots %>%
+  rename(CWD_4k = CWD,
+         PDSI_4k = PDSI)
 ```
 
 ## Load data - Daymet
@@ -683,7 +816,9 @@ evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_202509
   crop(CO) %>%
   mask(CO) %>%
   project(target_crs)
-activeCat(evt) <- "SYSTMGRPNA"
+
+#Using physiognomy groups
+activeCat(evt) <- "SYSTMGRPPH"
 ```
 
 ### Transects Join
@@ -694,7 +829,7 @@ evt_trans <- extract(evt, transects)
 transects <- transects %>%
   cbind(evt_trans) %>%
   select(-starts_with("ID")) %>%
-  rename("EVT" = "SYSTMGRPNA")
+  rename("EVT" = "SYSTMGRPPH")
 
 unique(transects$EVT)
 
@@ -704,118 +839,46 @@ evt_counts <- transects %>%
 
 # View the resulting summary table
 print(evt_counts)
-
-# Reclassification lookup: raw SystmGrpName -> simplified EVT_Group
-evt_lookup <- tibble::tribble(
-  ~EVT,                                                              ~EVT_Group,
-  "Ponderosa Pine Forest, Woodland and Savanna",                     "ponderosa",
-  "Lodgepole Pine Forest and Woodland",                              "lodgepole",
-  "Spruce-Fir Forest and Woodland",                                  "spruce-fir",
-  "Douglas-fir-Ponderosa Pine-Lodgepole Pine Forest and Woodland",   "mixed conifer",
-  "Aspen-Mixed Conifer Forest and Woodland",                         "mixed conifer",
-  "Aspen Forest, Woodland, and Parkland",                            "aspen",
-  "Douglas-fir-Grand Fir-White Fir Forest and Woodland",             "mixed conifer",
-  "Pinyon-Juniper Woodland",                                         "pinyon-juniper",
-  "Western Riparian Woodland and Shrubland",                         "other",
-  "Deciduous Shrubland",                                             "other",
-  "Big Sagebrush Shrubland and Steppe",                              "other",
-  "Limber Pine Woodland",                                            "other",
-  "Developed-Upland Evergreen Forest",                               "other",
-  "NLCD-Herbaceous Semi-dry",                                        "other",
-  "Developed-Upland Deciduous Forest",                               "other",
-  "Introduced Perennial Grassland and Forbland",                     "other",
-  "Open Water",                                                      "other",
-  "Barren",                                                          "other",
-  "Agriculture-Pasture and Hay",                                     "other",
-  "Alpine Dwarf-Shrubland, Fell-field and Meadow",                   "other",
-  "Developed-Upland Mixed Forest",                                   "other",
-  "Developed-Upland Shrubland",                                      "other",
-  "Developed-Roads",                                                 "other",
-  "Mountain Mahogany Woodland and Shrubland",                        "other",
-  "Sand Shrubland",                                                  "other",
-  "Grassland",                                                       "other",
-  "Dry Tundra",                                                      "other",
-  "Introduced Riparian Vegetation",                                  "other",
-  "Chaparral",
-          "other",
-      "Desert Scrub",                               "other",
-      "Developed-Medium Intensity",                 "other",
-      "Developed-Upland Herbaceous",                "other",
-      "Introduced Annual Grassland",                "other",
-      "Juniper Woodland and Savanna",                "other",
-      "Low Sagebrush Shrubland and Steppe",          "other",
-      "NLCD-Herbaceous Semi-wet",                    "other",
-      "NLCD-Herbaceous Wetlands",                    "other",
-      "NLCD-Recently Disturbed Forest",              "other",
-      "Salt Desert Scrub",                           "other",
-      "Snow-Ice",                                    "other",
-      "Sparse Vegetation",                           "other"
-)
-
-transects <- transects %>%
-  left_join(evt_lookup, by = "EVT")
-
-# Check for any unmatched categories (should be none / NA)
-transects %>%
-  st_drop_geometry() %>%
-  filter(is.na(EVT_Group)) %>%
-  distinct(EVT)
-
-# Recount using the simplified grouping
-evt_group_counts <- transects %>%
-  st_drop_geometry() %>%
-  count(EVT_Group, sort = TRUE)
-
-print(evt_group_counts)
 ```
 
 ### Plots Join
 
 ```{r}
-# Pull the raster's category table and map raw categories to simplified groups
-cat_tbl <- cats(evt)[[1]]
-names(cat_tbl)
+# ID -> physiognomy lookup
+cats_tbl   <- cats(evt)[[1]]
+active_col <- names(cats_tbl)[activeCat(evt) + 1]
+id_col     <- names(cats_tbl)[1]
 
-cat_tbl <- cat_tbl %>%
-  rename(EVT = SYSTMGRPNA) %>%            
-  left_join(evt_lookup, by = "EVT") %>%     # evt_lookup from before
-  mutate(EVT_Group = ifelse(is.na(EVT_Group), EVT, EVT_Group))
+lookup <- cats_tbl %>%
+  select(value = all_of(id_col), group = all_of(active_col)) %>%
+  distinct() %>%
+  mutate(
+    clean = paste0("prop_", tolower(gsub("^_|_$", "", gsub("[^A-Za-z0-9]+", "_", group))))
+  )
 
-# Reclassify the raster so cell values = simplified group, not raw SystmGrpNA
-evt_group_levels <- sort(unique(cat_tbl$EVT_Group))
-
-rcl_matrix <- cat_tbl %>%
-  transmute(from = VALUE, to = match(EVT_Group, evt_group_levels)) %>%
-  as.matrix()
-
-evt_group_rast <- classify(evt, rcl_matrix)
-levels(evt_group_rast) <- data.frame(id = seq_along(evt_group_levels),
-                                      EVT_Group = evt_group_levels)
-
-# Exact-area fraction of each group within each plot polygon
+# Exact-area fraction of each EVT value within each plot (fresh, un-renamed)
 evt_frac <- exact_extract(
-  evt_group_rast,
+  evt,
   allplots,
   fun = "frac",
-  append_cols = "unique_id",   
+  append_cols = "unique_id",
   progress = FALSE
 )
 
-# Rename frac_<n> -> prop_<group name>
-frac_id_map <- tibble(
-  col   = paste0("frac_", seq_along(evt_group_levels)),
-  group = evt_group_levels
-)
+# Sum EVT fractions into physiognomy groups, one column per group
+evt_prop <- evt_frac %>%
+  pivot_longer(starts_with("frac_"),
+               names_to = "value", names_prefix = "frac_",
+               values_to = "frac") %>%
+  mutate(value = as.numeric(value)) %>%
+  left_join(lookup, by = "value") %>%
+  group_by(unique_id, clean) %>%
+  summarise(prop = sum(frac, na.rm = TRUE), .groups = "drop") %>%
+  pivot_wider(names_from = clean, values_from = prop, values_fill = 0)
 
-names(evt_frac) <- ifelse(
-  names(evt_frac) %in% frac_id_map$col,
-  paste0("prop_", frac_id_map$group[match(names(evt_frac), frac_id_map$col)]),
-  names(evt_frac)
-)
-
-# Join proportions back onto your plots
+# Join back onto plots
 allplots <- allplots %>%
-  left_join(evt_frac, by = "unique_id")
+  left_join(evt_prop, by = "unique_id")
 ```
 
 ## Canopy Cover
