@@ -21,13 +21,17 @@ library(here)
 library(ranger)
 library(tidymodels)
 library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
+library(spatialsample) #Use for spatial cross validation
+
+conflicted::conflicts_prefer(yardstick::rmse)
+conflicted::conflicts_prefer(dplyr::filter)
 ```
 
 # Load Data
 
 ```{r, results = FALSE}
-plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
-  st_drop_geometry()
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") #%>%
+  #st_drop_geometry()
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
 
@@ -35,15 +39,15 @@ plots <- plots %>%
   mutate(across(c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
 
 
-plots_100m <- filter(plots, buffer_radius == 100)
-plots_250m <- filter(plots, buffer_radius == 250)
-plots_500m <- filter(plots, buffer_radius == 500)
+plots_100m <- dplyr::filter(plots, buffer_radius == 100)
+plots_250m <- dplyr::filter(plots, buffer_radius == 250)
+plots_500m <- dplyr::filter(plots, buffer_radius == 500)
 
 preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC") #For use later in VIPs
 
 plots_100m %>%
   group_by(Incid_Name) %>%
-  summarize(mean(prop_mod_high_sev))
+  summarize(mean(prop_high_sev))
 ```
 
 # Proportion of High-Severity
@@ -83,8 +87,8 @@ tune_wf <- workflow() %>%
 Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
-hi100_folds <- group_vfold_cv(hi100_train, group= "Incid_Name")
-#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+
+hi100_folds <- spatial_clustering_cv(hi100_train)
 
 # hi100_folds %>% 
 #   mutate(held_out_fire = map(splits, ~ assessment(.x) %>% distinct(Incid_Name))) %>% 
@@ -140,7 +144,11 @@ rf_res %>%
 
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
-  filter(.metric == "rmse") 
+  dplyr::filter(.metric == "rmse") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  dplyr::filter(.metric == "rsq") 
 ```
 
 Fit Final Model
@@ -234,8 +242,7 @@ tune_wf <- workflow() %>%
 Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
-hi250_folds <- group_vfold_cv(hi250_train, group= "Incid_Name")
-#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+hi250_folds <- spatial_clustering_cv(hi250_train)
 
 doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
@@ -374,8 +381,7 @@ tune_wf <- workflow() %>%
 Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
-hi500_folds <- group_vfold_cv(hi500_train, group= "Incid_Name")
-#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+hi500_folds <- spatial_clustering_cv(hi500_train)
 
 doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
@@ -515,8 +521,12 @@ tune_wf <- workflow() %>%
 Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
-mohi100_folds <- group_vfold_cv(mohi100_train, group= "Incid_Name")
-#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+mohi100_folds <- spatial_clustering_cv(mohi100_train)
+
+mohi100_folds %>%
+  mutate(held_out_fire = map(splits, ~ assessment(.x) %>% distinct(Incid_Name))) %>%
+  unnest(held_out_fire) %>%
+  select(id, Incid_Name)
 
 doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
@@ -655,8 +665,7 @@ tune_wf <- workflow() %>%
 Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
-mohi250_folds <- group_vfold_cv(mohi250_train, group= "Incid_Name")
-#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+mohi250_folds <- spatial_clustering_cv(mohi250_train)
 
 doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
@@ -796,8 +805,7 @@ tune_wf <- workflow() %>%
 Tune hyperparameters based on RMSE
 ```{r}
 set.seed(234)
-mohi500_folds <- group_vfold_cv(mohi500_train, group= "Incid_Name")
-#can also use spatial_block_cv for true spatial rather than leaving fires out (needs geometry)
+mohi500_folds <- spatial_clustering_cv(mohi500_train)
 
 doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
@@ -990,5 +998,84 @@ pdp_extent_slope <- model_profile(
 plot(pdp_extent_slope,
      title = "Effect of treated extent by slope",
      subtitle = "")
+```
+
+# Average reduction in percent area burned at high severity between 0 and 1 treated area
+
+```{r}
+trt_effect <- function(explainer) {
+  dat <- explainer$data
+
+  d0 <- dat; d0$prop_extent_treated <- 0   # untreated
+  d1 <- dat; d1$prop_extent_treated <- 1   # fully treated
+
+  p0 <- predict(explainer$model, new_data = d0)$.pred
+  p1 <- predict(explainer$model, new_data = d1)$.pred
+
+  tibble::tibble(
+    mean_pred_untreated = mean(p0),
+    mean_pred_treated   = mean(p1),
+    abs_diff            = mean(p1) - mean(p0),                 # in proportion units
+    pct_diff            = (mean(p1) - mean(p0)) / mean(p0) * 100  # relative % change
+  )
+}
+
+results <- dplyr::bind_rows(
+  "High sev, 100m"   = trt_effect(hi100_explainer),
+  "High sev, 250m"   = trt_effect(hi250_explainer),
+  "High sev, 500m"   = trt_effect(hi500_explainer),
+  "Mod-high, 100m"   = trt_effect(mohi100_explainer),
+  "Mod-high, 250m"   = trt_effect(mohi250_explainer),
+  "Mod-high, 500m"   = trt_effect(mohi500_explainer),
+  .id = "model"
+)
+results
+mean(results$pct_diff)
+```
+
+# Visualizing the difference between using spatial_block_cv and spatial_clustering_cv
+
+```{r}
+library(tidyverse)
+library(sf)
+library(spatialsample)
+library(tigris)
+
+set.seed(123)
+hi100_block <- spatial_block_cv(hi100_train)
+hi100_clust <- spatial_clustering_cv(hi100_train)
+
+# One row per observation, labeled with the fold where it's held out
+fold_assignments <- function(rset) {
+  map2_dfr(rset$splits, rset$id, ~ assessment(.x) |> mutate(fold = .y))
+}
+
+folds_df <- bind_rows(
+  fold_assignments(hi100_block) |> mutate(method = "Spatial block CV"),
+  fold_assignments(hi100_clust) |> mutate(method = "Spatial clustering CV")
+)
+
+# Colorado outline, matched to your data's CRS
+co <- states(cb = TRUE, progress_bar = FALSE) |>
+  filter(NAME == "Colorado") |>
+  st_transform(st_crs(hi100_train))
+
+ggplot() +
+  geom_sf(data = co, fill = "grey95", color = "grey40") +
+  geom_sf(data = folds_df, aes(color = fold), size = 0.8, alpha = 0.8) +
+  facet_wrap(~ method) +
+  scale_color_brewer(palette = "Paired") +
+  theme_minimal() +
+  labs(color = "Fold")
+
+folds_df |>
+  st_drop_geometry() |>
+  count(method, fold) |>
+  ggplot(aes(fold, n, fill = method)) +
+  geom_col(position = "dodge") +
+  theme_minimal()
+
+autoplot(hi100_block)
+autoplot(hi100_clust)
 ```
 
