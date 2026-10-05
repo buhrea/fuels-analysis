@@ -36,7 +36,7 @@ plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
 
 plots <- plots %>%
-  mutate(across(c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
+  mutate(across(c("northness", "eastness", "elevation", "tpi", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
 
 
 plots_100m <- dplyr::filter(plots, buffer_radius == 100)
@@ -48,6 +48,40 @@ preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC") 
 plots_100m %>%
   group_by(Incid_Name) %>%
   summarize(mean(prop_high_sev))
+```
+
+# Correlation of Predictor Variables
+
+VIF and linear correlation
+
+```{r}
+model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + TMIN + TOTAL_COUNT + prop_Rearrangement + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
+
+vif(model)
+
+#removing individual treatment types and individual EVTs
+model2 <- lm(prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TMIN + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa, data = plots)
+
+vif(model2)
+
+#Correlation matrix
+plots_corr <- plots %>% st_drop_geometry()
+cor_matrix <- cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir")], use = "complete.obs")
+
+# turn into long format, drop diagonal and duplicate pairs
+cor_df <- as.data.frame(as.table(cor_matrix))
+names(cor_df) <- c("var1", "var2", "cor")
+
+cor_df <- cor_df %>%
+  filter(var1 != var2) %>%
+  mutate(pair = paste(pmin(as.character(var1), as.character(var2)),
+                       pmax(as.character(var1), as.character(var2)))) %>%
+  distinct(pair, .keep_all = TRUE) %>%
+  filter(abs(cor) > 0.5) %>%
+  arrange(desc(abs(cor))) %>%
+  select(var1, var2, cor)
+
+print(cor_df)
 ```
 
 # Proportion of High-Severity
@@ -294,6 +328,10 @@ rf_res %>%
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
   filter(.metric == "rmse") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  dplyr::filter(.metric == "rsq") 
 ```
 
 Fit Final Model
@@ -433,6 +471,10 @@ rf_res %>%
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
   filter(.metric == "rmse") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  dplyr::filter(.metric == "rsq") 
 ```
 
 Fit Final Model
@@ -577,7 +619,11 @@ rf_res %>%
 
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
-  filter(.metric == "rsq") 
+  filter(.metric == "rmse") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  dplyr::filter(.metric == "rsq") 
 ```
 
 Fit Final Model
@@ -717,6 +763,10 @@ rf_res %>%
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
   filter(.metric == "rmse") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  dplyr::filter(.metric == "rsq") 
 ```
 
 Fit Final Model
@@ -857,6 +907,10 @@ rf_res %>%
 rf_res %>% 
   collect_metrics(summarize = FALSE) %>% 
   filter(.metric == "rmse") 
+
+rf_res %>% 
+  collect_metrics(summarize = FALSE) %>% 
+  dplyr::filter(.metric == "rsq") 
 ```
 
 Fit Final Model
@@ -915,9 +969,9 @@ plot(pdp_mohi500)
 ## Variable Importance, Proportion of High Severity
 
 ```{r}
-plot(vip_500, vip_1000, title = "Variable Importance by buffer scale")
+plot(vip_hi100, vip_hi250, vip_hi500, title = "Variable Importance by buffer scale")
 
-plot(vip_plot, max_vars = 15, show_boxplots = FALSE) +
+plot(vip_hi500, max_vars = 15, show_boxplots = FALSE) +
   ggtitle("Variable Importance, 500 m")
 ```
 
@@ -939,7 +993,7 @@ plot(vip_plot, max_vars = 15, show_boxplots = FALSE) +
 
 ```
 
-#testing out interaction pdp
+# Testing out interaction pdp
 ```{r}
 # bin max temp into terciles (adjust name/breaks to your data)
 dat <- mohi500_explainer$data |>
