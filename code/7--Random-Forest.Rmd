@@ -30,24 +30,25 @@ conflicted::conflicts_prefer(dplyr::filter)
 # Load Data
 
 ```{r, results = FALSE}
-plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") #%>%
-  #st_drop_geometry()
+plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
+  filter(Incid_Name != "EAST FORK") #seeing very little treated area in this fire now
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
 
-plots <- plots %>%
-  mutate(across(c("northness", "eastness", "elevation", "tpi", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
+# plots <- plots %>%
+#   mutate(across(c("northness", "eastness", "elevation", "tpi", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
 
 
-plots_100m <- dplyr::filter(plots, buffer_radius == 100)
-plots_250m <- dplyr::filter(plots, buffer_radius == 250)
-plots_500m <- dplyr::filter(plots, buffer_radius == 500)
+plots_100m <- filter(plots, buffer_radius == 100)
+plots_250m <- filter(plots, buffer_radius == 250)
+plots_500m <- filter(plots, buffer_radius == 500)
 
-preds <- c("northness", "slope", "PRCP", "TMAX", "prop_extent_treated",  "TCC") #For use later in VIPs
+preds <- c("northness", "eastness", "elevation", "TPI", "slope", "Tmax_4k", "PR_4k", "VS_4k", "ERC_4k", "CWD_4k", "PDSI_4k", "prop_extent_treated", "prop_conifer", "prop_hardwood", "prop_shrubland", "prop_grassland", "TCC") #For use later in VIPs
 
-plots_100m %>%
+plots_500m %>%
+  st_drop_geometry() %>%
   group_by(Incid_Name) %>%
-  summarize(mean(prop_high_sev))
+  summarize(mean(prop_extent_treated))
 ```
 
 # Correlation of Predictor Variables
@@ -55,33 +56,14 @@ plots_100m %>%
 VIF and linear correlation
 
 ```{r}
-model <- lm(prop_high_sev ~ northness + eastness + elevation + slope + TMAX + PRCP + TMIN + TOTAL_COUNT + prop_Rearrangement + prop_Wildfire + prop_Broadcast.Burn + prop_Removal + prop_extent_treated + TCC + prop_aspen + prop_lodgepole + prop_mixed.conifer + prop_pinyon.juniper + prop_ponderosa + prop_spruce.fir, data = plots)
+model <- lm(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_conifer_hardwood + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
 
 vif(model)
 
-#removing individual treatment types and individual EVTs
-model2 <- lm(prop_high_sev ~ northness + eastness + elevation + slope + PRCP + TMAX + TMIN + TOTAL_COUNT + prop_extent_treated + TCC + prop_ponderosa, data = plots)
-
+#removing individual prop_conifer_hardwoord
+model2 <- lm(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
+  #note, I checked vif for each scale of plot and each response variable. slightly higher vifs at larger scales but all under 5
 vif(model2)
-
-#Correlation matrix
-plots_corr <- plots %>% st_drop_geometry()
-cor_matrix <- cor(plots_corr[, c("northness", "eastness", "elevation", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir")], use = "complete.obs")
-
-# turn into long format, drop diagonal and duplicate pairs
-cor_df <- as.data.frame(as.table(cor_matrix))
-names(cor_df) <- c("var1", "var2", "cor")
-
-cor_df <- cor_df %>%
-  filter(var1 != var2) %>%
-  mutate(pair = paste(pmin(as.character(var1), as.character(var2)),
-                       pmax(as.character(var1), as.character(var2)))) %>%
-  distinct(pair, .keep_all = TRUE) %>%
-  filter(abs(cor) > 0.5) %>%
-  arrange(desc(abs(cor))) %>%
-  select(var1, var2, cor)
-
-print(cor_df)
 ```
 
 # Proportion of High-Severity
@@ -97,7 +79,7 @@ hi100_test  <- testing(data_split_hi100)
 
 Create a recipe
 ```{r}
-hi100_rec <- recipe(prop_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = hi100_train)
+hi100_rec <- recipe(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = hi100_train)
 
 hi100_prep <- prep(hi100_rec)
 ```
@@ -133,7 +115,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
+  mtry(range = c(1, 17)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -229,7 +211,7 @@ PDP
 ```{r}
 pdp_hi100 <- model_profile(
   hi100_explainer,
-  variables = "prop_extent_treated",
+  variables = preds,
   N = NULL
 )
 plot(pdp_hi100)
@@ -240,6 +222,18 @@ Shaply Plot - just for fun
 shap_plots <- predict_parts(hi100_explainer, hi100_test[96, ], type = 'shap')
 plot(shap_plots)
 ```
+
+ALE plot
+```{r}
+ale_hi100 <- model_profile(
+  explainer = hi100_explainer,
+  variables = preds,
+  type = 'accumulated'      
+)
+
+plot(ale_hi100)
+```
+
 
 ## 250m
 
@@ -252,7 +246,7 @@ hi250_test  <- testing(data_split_hi250)
 
 Create a recipe
 ```{r}
-hi250_rec <- recipe(prop_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = hi250_train)
+hi250_rec <- recipe(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = hi250_train)
 
 hi250_prep <- prep(hi250_rec)
 ```
@@ -282,7 +276,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
+  mtry(range = c(1, 17)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -395,7 +389,7 @@ hi500_test  <- testing(data_split_hi500)
 
 Create a recipe
 ```{r}
-hi500_rec <- recipe(prop_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = hi500_train)
+hi500_rec <- recipe(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = hi500_train)
 
 hi500_prep <- prep(hi500_rec)
 ```
@@ -425,7 +419,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
+  mtry(range = c(1, 17)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -539,7 +533,7 @@ mohi100_test  <- testing(data_split_mohi100)
 
 Create a recipe
 ```{r}
-mohi100_rec <- recipe(prop_mod_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = mohi100_train)
+mohi100_rec <- recipe(prop_mod_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = mohi100_train)
 
 mohi100_prep <- prep(mohi100_rec)
 ```
@@ -574,7 +568,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
+  mtry(range = c(1, 17)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -687,7 +681,7 @@ mohi250_test  <- testing(data_split_mohi250)
 
 Create a recipe
 ```{r}
-mohi250_rec <- recipe(prop_mod_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = mohi250_train)
+mohi250_rec <- recipe(prop_mod_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = mohi250_train)
 
 mohi250_prep <- prep(mohi250_rec)
 ```
@@ -717,7 +711,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
+  mtry(range = c(1, 17)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -831,7 +825,7 @@ mohi500_test  <- testing(data_split_mohi500)
 
 Create a recipe
 ```{r}
-mohi500_rec <- recipe(prop_mod_high_sev ~ northness + slope + PRCP + TMAX + prop_extent_treated + TCC, data = mohi500_train)
+mohi500_rec <- recipe(prop_mod_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = mohi500_train)
 
 mohi500_prep <- prep(mohi500_rec)
 ```
@@ -861,7 +855,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 6)),
+  mtry(range = c(1, 17)),
   min_n(range = c(1,40)),
   levels = 5
 )
