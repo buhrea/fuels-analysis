@@ -3,9 +3,9 @@ title: "7--Random-Forest"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output:
+  pdf_document: default
   html_document:
     df_print: paged
-  pdf_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -22,6 +22,7 @@ library(ranger)
 library(tidymodels)
 library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 library(spatialsample) #Use for spatial cross validation
+library(car) #VIF function
 
 conflicted::conflicts_prefer(yardstick::rmse)
 conflicted::conflicts_prefer(dplyr::filter)
@@ -34,10 +35,6 @@ plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS
   filter(Incid_Name != "EAST FORK") #seeing very little treated area in this fire now
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
-
-# plots <- plots %>%
-#   mutate(across(c("northness", "eastness", "elevation", "tpi", "slope", "TMAX", "PRCP", "TMIN", "TOTAL_COUNT", "prop_Rearrangement", "prop_Wildfire", "prop_Broadcast.Burn", "prop_Removal", "prop_extent_treated", "TCC", "prop_aspen", "prop_lodgepole", "prop_mixed.conifer", "prop_other", "prop_pinyon.juniper", "prop_ponderosa", "prop_spruce.fir"), as.numeric))
-
 
 plots_100m <- filter(plots, buffer_radius == 100)
 plots_250m <- filter(plots, buffer_radius == 250)
@@ -963,10 +960,7 @@ plot(pdp_mohi500)
 ## Variable Importance, Proportion of High Severity
 
 ```{r}
-plot(vip_hi100, vip_hi250, vip_hi500, title = "Variable Importance by buffer scale")
 
-plot(vip_hi500, max_vars = 15, show_boxplots = FALSE) +
-  ggtitle("Variable Importance, 500 m")
 ```
 
 ## Partial Dependence Plot, Proportion of High Severity
@@ -989,63 +983,15 @@ plot(vip_hi500, max_vars = 15, show_boxplots = FALSE) +
 
 # Testing out interaction pdp
 ```{r}
-# bin max temp into terciles (adjust name/breaks to your data)
-dat <- mohi500_explainer$data |>
-  mutate(tmax_class = cut(TMAX,
-                          breaks = quantile(TMAX, c(0, 1/3, 2/3, 1), na.rm = TRUE),
-                          labels = c("Low", "Mid", "High"),
-                          include.lowest = TRUE))
 
-mohi500_explainer$data <- dat
-
-pdp_extent_tmax <- model_profile(
-  mohi500_explainer,
-  variables = "prop_extent_treated",
-  groups = "tmax_class",
-  N = NULL
-)
-
-plot(pdp_extent_tmax,
-     title = "Effect of treated extent by max temperature",
-     subtitle = "")
 ```
 
 ```{r}
-mohi500_explainer$data <- mohi500_explainer$data |>
-  mutate(tmax_class = factor(
-    if_else(TMAX <= median(TMAX, na.rm = TRUE), "Low", "High"),
-    levels = c("Low", "High")
-  ))
 
-pdp_extent_tmax <- model_profile(
-  mohi500_explainer,
-  variables = "prop_extent_treated",
-  groups = "tmax_class",
-  N = NULL
-)
-
-plot(pdp_extent_tmax,
-     title = "Effect of treated extent by max temperature",
-     subtitle = "")
 ```
 
 ```{r}
-mohi500_explainer$data <- mohi500_explainer$data |>
-  mutate(slope_class = factor(
-    if_else(slope <= median(slope, na.rm = TRUE), "Mild", "Steep"),
-    levels = c("Mild", "Steep")
-  ))
 
-pdp_extent_slope <- model_profile(
-  mohi500_explainer,
-  variables = "prop_extent_treated",
-  groups = "slope_class",
-  N = NULL
-)
-
-plot(pdp_extent_slope,
-     title = "Effect of treated extent by slope",
-     subtitle = "")
 ```
 
 # Average reduction in percent area burned at high severity between 0 and 1 treated area
@@ -1080,50 +1026,3 @@ results <- dplyr::bind_rows(
 results
 mean(results$pct_diff)
 ```
-
-# Visualizing the difference between using spatial_block_cv and spatial_clustering_cv
-
-```{r}
-library(tidyverse)
-library(sf)
-library(spatialsample)
-library(tigris)
-
-set.seed(123)
-hi100_block <- spatial_block_cv(hi100_train)
-hi100_clust <- spatial_clustering_cv(hi100_train)
-
-# One row per observation, labeled with the fold where it's held out
-fold_assignments <- function(rset) {
-  map2_dfr(rset$splits, rset$id, ~ assessment(.x) |> mutate(fold = .y))
-}
-
-folds_df <- bind_rows(
-  fold_assignments(hi100_block) |> mutate(method = "Spatial block CV"),
-  fold_assignments(hi100_clust) |> mutate(method = "Spatial clustering CV")
-)
-
-# Colorado outline, matched to your data's CRS
-co <- states(cb = TRUE, progress_bar = FALSE) |>
-  filter(NAME == "Colorado") |>
-  st_transform(st_crs(hi100_train))
-
-ggplot() +
-  geom_sf(data = co, fill = "grey95", color = "grey40") +
-  geom_sf(data = folds_df, aes(color = fold), size = 0.8, alpha = 0.8) +
-  facet_wrap(~ method) +
-  scale_color_brewer(palette = "Paired") +
-  theme_minimal() +
-  labs(color = "Fold")
-
-folds_df |>
-  st_drop_geometry() |>
-  count(method, fold) |>
-  ggplot(aes(fold, n, fill = method)) +
-  geom_col(position = "dodge") +
-  theme_minimal()
-
-autoplot(hi100_block)
-autoplot(hi100_clust)
-```
-
