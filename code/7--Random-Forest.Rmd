@@ -14,7 +14,7 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, tidy = TRUE
 
 # Load Packages
 
-```{r}
+```{r, include=FALSE}
 library(tidyverse)
 library(sf)
 library(here)
@@ -40,12 +40,10 @@ plots_100m <- filter(plots, buffer_radius == 100)
 plots_250m <- filter(plots, buffer_radius == 250)
 plots_500m <- filter(plots, buffer_radius == 500)
 
-preds <- c("northness", "eastness", "elevation", "TPI", "slope", "Tmax_4k", "PR_4k", "VS_4k", "ERC_4k", "CWD_4k", "PDSI_4k", "prop_extent_treated", "prop_conifer", "prop_hardwood", "prop_shrubland", "prop_grassland", "TCC") #For use later in VIPs
-
 plots_500m %>%
   st_drop_geometry() %>%
   group_by(Incid_Name) %>%
-  summarize(mean(prop_extent_treated))
+  summarize(mean(prop_shrubland))
 ```
 
 # Correlation of Predictor Variables
@@ -53,14 +51,23 @@ plots_500m %>%
 VIF and linear correlation
 
 ```{r}
-model <- lm(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_conifer_hardwood + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
+model <- lm(prop_high_sev ~ extreme_area + northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + VPD_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_conifer_hardwood + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
 
 vif(model)
 
 #removing individual prop_conifer_hardwoord
-model2 <- lm(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
-  #note, I checked vif for each scale of plot and each response variable. slightly higher vifs at larger scales but all under 5
+model2 <- lm(prop_high_sev ~ extreme_area + northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + VPD_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
 vif(model2)
+
+#Removing TMAX for collinearity with vpd
+model3 <- lm(prop_high_sev ~ extreme_area + northness + eastness + elevation + TPI + slope + PR_4k + VS_4k + VPD_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
+vif(model3)
+
+#In preds set, also removing monthly CWD and PDSI, and daily ERC, precip, VPD, and temperature because of nonsense pdp plots. Getting rid of prop_grassland because all but one fire has <1% grassland (plateau has 2%). Getting rid of eastness for now for simplicity, also it is a weak relationship but it is in the opposite direction from what I'd expect
+preds <- c("DailyAreaBurned", "extreme_area", "northness", "elevation", "TPI", "slope", "VS_4k", "prop_extent_treated", "prop_conifer", "prop_hardwood", "prop_shrubland", "TCC") #For use later in VIPs
+
+model4 <- lm(prop_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = plots)
+vif(model4)
 ```
 
 # Proportion of High-Severity
@@ -76,7 +83,7 @@ hi100_test  <- testing(data_split_hi100)
 
 Create a recipe
 ```{r}
-hi100_rec <- recipe(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = hi100_train)
+hi100_rec <- recipe(prop_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = hi100_train)
 
 hi100_prep <- prep(hi100_rec)
 ```
@@ -112,7 +119,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 17)),
+  mtry(range = c(1, 12)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -212,23 +219,30 @@ pdp_hi100 <- model_profile(
   N = NULL
 )
 plot(pdp_hi100)
+
+pdp_hi100 <- model_profile(
+  hi100_explainer,
+  variables = "prop_extent_treated",
+  N = NULL
+)
+plot(pdp_hi100)
 ```
 
 Shaply Plot - just for fun
 ```{r}
-shap_plots <- predict_parts(hi100_explainer, hi100_test[96, ], type = 'shap')
-plot(shap_plots)
+# shap_plots <- predict_parts(hi100_explainer, hi100_test[96, ], type = 'shap')
+# plot(shap_plots)
 ```
 
 ALE plot
 ```{r}
-ale_hi100 <- model_profile(
-  explainer = hi100_explainer,
-  variables = preds,
-  type = 'accumulated'      
-)
-
-plot(ale_hi100)
+# ale_hi100 <- model_profile(
+#   explainer = hi100_explainer,
+#   variables = preds,
+#   type = 'accumulated'      
+# )
+# 
+# plot(ale_hi100)
 ```
 
 
@@ -243,7 +257,7 @@ hi250_test  <- testing(data_split_hi250)
 
 Create a recipe
 ```{r}
-hi250_rec <- recipe(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = hi250_train)
+hi250_rec <- recipe(prop_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = hi250_train)
 
 hi250_prep <- prep(hi250_rec)
 ```
@@ -273,7 +287,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 17)),
+  mtry(range = c(1, 12)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -369,6 +383,13 @@ PDP
 ```{r}
 pdp_hi250 <- model_profile(
   hi250_explainer,
+  variables = preds,
+  N = NULL
+)
+plot(pdp_hi250)
+
+pdp_hi250 <- model_profile(
+  hi250_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
@@ -386,7 +407,7 @@ hi500_test  <- testing(data_split_hi500)
 
 Create a recipe
 ```{r}
-hi500_rec <- recipe(prop_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = hi500_train)
+hi500_rec <- recipe(prop_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = hi500_train)
 
 hi500_prep <- prep(hi500_rec)
 ```
@@ -416,7 +437,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 17)),
+  mtry(range = c(1, 12)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -512,6 +533,13 @@ PDP
 ```{r}
 pdp_hi500 <- model_profile(
   hi500_explainer,
+  variables = preds,
+  N = NULL
+)
+plot(pdp_hi500)
+
+pdp_hi500 <- model_profile(
+  hi500_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
@@ -530,7 +558,7 @@ mohi100_test  <- testing(data_split_mohi100)
 
 Create a recipe
 ```{r}
-mohi100_rec <- recipe(prop_mod_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = mohi100_train)
+mohi100_rec <- recipe(prop_mod_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = mohi100_train)
 
 mohi100_prep <- prep(mohi100_rec)
 ```
@@ -565,7 +593,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 17)),
+  mtry(range = c(1, 12)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -661,6 +689,13 @@ PDP
 ```{r}
 pdp_mohi100 <- model_profile(
   mohi100_explainer,
+  variables = preds,
+  N = NULL
+)
+plot(pdp_mohi100)
+
+pdp_mohi100 <- model_profile(
+  mohi100_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
@@ -678,7 +713,7 @@ mohi250_test  <- testing(data_split_mohi250)
 
 Create a recipe
 ```{r}
-mohi250_rec <- recipe(prop_mod_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = mohi250_train)
+mohi250_rec <- recipe(prop_mod_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = mohi250_train)
 
 mohi250_prep <- prep(mohi250_rec)
 ```
@@ -708,7 +743,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 17)),
+  mtry(range = c(1, 12)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -804,6 +839,13 @@ PDP
 ```{r}
 pdp_mohi250 <- model_profile(
   mohi250_explainer,
+  variables = preds,
+  N = NULL
+)
+plot(pdp_mohi250)
+
+pdp_mohi250 <- model_profile(
+  mohi250_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
@@ -822,7 +864,7 @@ mohi500_test  <- testing(data_split_mohi500)
 
 Create a recipe
 ```{r}
-mohi500_rec <- recipe(prop_mod_high_sev ~ northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = mohi500_train)
+mohi500_rec <- recipe(prop_mod_high_sev ~ DailyAreaBurned + extreme_area + northness + elevation + TPI + slope + VS_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + TCC, data = mohi500_train)
 
 mohi500_prep <- prep(mohi500_rec)
 ```
@@ -852,7 +894,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 17)),
+  mtry(range = c(1, 12)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -948,6 +990,13 @@ PDP
 ```{r}
 pdp_mohi500 <- model_profile(
   mohi500_explainer,
+  variables = preds,
+  N = NULL
+)
+plot(pdp_mohi500)
+
+pdp_mohi500 <- model_profile(
+  mohi500_explainer,
   variables = "prop_extent_treated",
   N = NULL
 )
@@ -957,41 +1006,222 @@ plot(pdp_mohi500)
 
 # Figures
 
-## Variable Importance, Proportion of High Severity
+## Variable Importance
 
 ```{r}
+library(tidyverse)
+library(patchwork)
 
+# --- PANEL A: High-Severity Fire VIP ---
+vip_hi_list <- list(
+  "100m"  = vip_hi100,
+  "250m" = vip_hi250,
+  "500m" = vip_hi500
+)
+
+df_vip_hi <- map_dfr(vip_hi_list, ~ as.data.frame(.x), .id = "Scale") %>%
+  filter(!variable %in% c("_full_model_", "_baseline_")) %>%
+  group_by(Scale, variable) %>%
+  summarise(dropout_loss = mean(dropout_loss, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    Scale = factor(Scale, levels = c("100m", "250m", "500m")),
+    dropout_loss_pct = dropout_loss * 100
+  )
+
+# --- PANEL C: Moderate/High-Severity Fire VIP ---
+vip_mohi_list <- list(
+  "100m"  = vip_mohi100,
+  "250m" = vip_mohi250,
+  "500m" = vip_mohi500
+)
+
+df_vip_mohi <- map_dfr(vip_mohi_list, ~ as.data.frame(.x), .id = "Scale") %>%
+  filter(!variable %in% c("_full_model_", "_baseline_")) %>%
+  group_by(Scale, variable) %>%
+  summarise(dropout_loss = mean(dropout_loss, na.rm = TRUE), .groups = "drop") %>%
+  mutate(
+    Scale = factor(Scale, levels = c("100m", "250m", "500m")),
+    dropout_loss_pct = dropout_loss * 100
+  )
 ```
 
-## Partial Dependence Plot, Proportion of High Severity
+## Partial Dependence Plot
 
 ```{r}
+# --- PANEL B: High-Severity PDP ---
+pdp_hi_list <- list(
+  "100m"  = pdp_hi100,
+  "250m" = pdp_hi250,
+  "500m" = pdp_hi500
+)
 
+df_pdp_hi <- map_dfr(pdp_hi_list, ~ .x$agr_profiles, .id = "Scale") %>%
+  filter(`_vname_` == "prop_extent_treated") %>% # filter to treated area predictor
+  mutate(Scale = factor(Scale, levels = c("100m", "250m", "500m")))
+
+# --- PANEL D: Moderate/High-Severity PDP ---
+pdp_mohi_list <- list(
+  "100m"  = pdp_mohi100,
+  "250m" = pdp_mohi250,
+  "500m" = pdp_mohi500
+)
+
+df_pdp_mohi <- map_dfr(pdp_mohi_list, ~ .x$agr_profiles, .id = "Scale") %>%
+  filter(`_vname_` == "prop_extent_treated") %>%
+  mutate(Scale = factor(Scale, levels = c("100m", "250m", "500m")))
 ```
 
-## Variable Importance, Proportion of Moderate-High Severity
+## Build ggplots
 
 ```{r}
+# Custom color palette matching Figure 2
+scale_colors <- c(
+  "100m"  = "#0d0887",
+  "250m" = "#cc4678",
+  "500m" = "#f0f921"
+)
 
+# --- Plot A: VIP High Severity ---
+p_a <- ggplot(df_vip_hi, aes(x = dropout_loss_pct, y = reorder(variable, dropout_loss_pct), color = Scale)) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = scale_colors) +
+  labs(x = NULL, y = NULL) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+# --- Plot B: PDP High Severity ---
+p_b <- ggplot(df_pdp_hi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = scale_colors) +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  labs(x = NULL, y = "p(high-severity fire)") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+# --- Plot C: VIP Moderate/High Severity ---
+p_c <- ggplot(df_vip_mohi, aes(x = dropout_loss_pct, y = reorder(variable, dropout_loss_pct), color = Scale)) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = scale_colors) +
+  labs(x = "Variable importance - increase in MSE (%)", y = NULL) +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+# --- Plot D: PDP Moderate/High Severity ---
+p_d <- ggplot(df_pdp_mohi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = scale_colors) +
+  scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
+  labs(x = "Proportion of area previously treated", y = "p(moderate/high-severity fire)") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
 ```
 
-## Partial Dependence Plot, Proportion of Moderate-High Severity
+## Combine plots
 
 ```{r}
+fig2 <- (p_a + p_b) / (p_c + p_d) +
+  plot_layout(guides = "collect") +
+  plot_annotation(tag_levels = "a") &
+  theme(
+    plot.tag = element_text(face = "bold", size = 14),
+    legend.position = "right"
+  )
 
+# Display final figure
+print(fig2)
 ```
 
 # Testing out interaction pdp
-```{r}
 
+Need to give everything a unique name first 
+
+```{r}
+# library(pdp)
+# library(tidyverse)
+# library(patchwork)
+# 
+# # Define scale models/explainers and training data list
+# # Note: Replace 'hi100_explainer$model' or 'final_fitted' with your actual fitted workflow/model objects
+# explainers_hi <- list(
+#   "100m" = hi100_explainer,
+#   "250m" = hi250_explainer,
+#   "500m" = hi500_explainer
+# )
+# 
+# # Calculate 2D PDP grids across all scales
+# df_pdp2d <- map_dfr(names(explainers_hi), function(scale_name) {
+#   exp <- explainers_hi[[scale_name]]
+#   
+#   # Extract partial dependence grid for 2 variables simultaneously
+#   pd <- pdp::partial(
+#     object = exp$model,
+#     pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+#     train = exp$data,
+#     grid.resolution = 30, # Number of grid steps along each axis
+#     prob = TRUE
+#   )
+#   
+#   # Add scale identifier
+#   pd$Scale <- scale_name
+#   return(pd)
+# }) %>%
+#   mutate(Scale = factor(Scale, levels = c("100m", "250m", "500m")))
 ```
 
 ```{r}
-
+# # Create side-by-side heatmaps grouped by Scale
+# p_heatmaps <- ggplot(df_pdp2d, aes(x = prop_extent_treated, y = DailyAreaBurned, fill = yhat)) +
+#   geom_tile() +
+#   geom_contour(aes(z = yhat), color = "white", alpha = 0.4, linewidth = 0.3) + # Optional contour lines
+#   scale_fill_viridis_c(
+#     option = "magma", 
+#     name = "p(high-severity fire)",
+#     labels = scales::number_format(accuracy = 0.01)
+#   ) +
+#   scale_x_continuous(expand = c(0, 0)) +
+#   scale_y_continuous(expand = c(0, 0)) +
+#   facet_wrap(~ Scale, nrow = 1) +
+#   labs(
+#     x = "Proportion of Area Previously Treated",
+#     y = "Daily Area Burned (ha)",
+#     title = "2D Interaction Surface: Treatment Extent vs. Daily Area Burned"
+#   ) +
+#   theme_bw() +
+#   theme(
+#     panel.spacing = unit(1, "lines"),
+#     strip.background = element_rect(fill = "grey90", color = NA),
+#     strip.text = element_text(face = "bold", size = 11),
+#     legend.position = "right"
+#   )
+# 
+# # Display heatmap plot
+# print(p_heatmaps)
 ```
 
 ```{r}
-
+# plot_scale_2d <- function(scale_label) {
+#   df_sub <- df_pdp2d %>% filter(Scale == scale_label)
+#   
+#   ggplot(df_sub, aes(x = prop_extent_treated, y = DailyAreaBurned, fill = yhat)) +
+#     geom_raster(interpolate = TRUE) +
+#     scale_fill_viridis_c(option = "magma", name = "p(high_sev)") +
+#     labs(
+#       title = paste("Scale:", scale_label),
+#       x = "Prop. Area Treated",
+#       y = "Daily Area Burned"
+#     ) +
+#     theme_minimal() +
+#     theme(plot.title = element_text(face = "bold", hjust = 0.5))
+# }
+# 
+# p_100 <- plot_scale_2d("100m")
+# p_250 <- plot_scale_2d("250m")
+# p_500 <- plot_scale_2d("500m")
+# 
+# p_combined <- (p_100 | p_250 | p_500) + 
+#   plot_layout(guides = "collect")
+# 
+# print(p_combined)
 ```
 
 # Average reduction in percent area burned at high severity between 0 and 1 treated area
