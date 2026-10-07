@@ -75,6 +75,8 @@ mutate(
 
 #Drop geometry
 transects <- st_drop_geometry(transects)
+
+range(transects$year)
 ```
 
 # Dataset Summary
@@ -308,6 +310,25 @@ ggplot(pred_all, aes(x = x, y = predicted, group = group, shape = group)) +
   )
 ```
 
+## For GSS Abstract, percent drop in severity when high severity fire enters a treated area
+
+```{r}
+pred_high_df <- as.data.frame(pred_high)
+
+pred_high_df %>% 
+  dplyr::select(x, group, predicted, conf.low, conf.high)
+
+# Replace "entering" with whatever your non-control level of `type` is called
+ent <- pred_high %>% filter(x == "entering")
+
+p_untreated <- ent$predicted[ent$group == "No"]
+p_treated   <- ent$predicted[ent$group == "Yes"]
+
+abs_drop <- p_untreated - p_treated                      # RdNBR units
+pct_drop <- (p_untreated - p_treated) / p_untreated * 100
+c(abs_drop = abs_drop, pct_drop = pct_drop)
+```
+
 # Exiting Models
 
 ### Low Exiting Model
@@ -426,3 +447,5 @@ ggplot(pred_all2, aes(x = x, y = predicted, group = group, shape = group)) +
     legend.position = "none"
   )
 ```
+
+
