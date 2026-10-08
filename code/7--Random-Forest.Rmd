@@ -3,6 +3,7 @@ title: "7--Random-Forest"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output:
+  toc: true
   pdf_document: default
   html_document:
     df_print: paged
@@ -10,6 +11,8 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, tidy = TRUE)
+
+set.seed(123)
 ```
 
 # Load Packages
@@ -24,6 +27,7 @@ library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 library(spatialsample) #Use for spatial cross validation
 library(car) #VIF function
 library(pdp) #for use in heatmaps
+library(patchwork) #Combine final figures
 
 conflicted::conflicts_prefer(yardstick::rmse)
 conflicted::conflicts_prefer(dplyr::filter)
@@ -33,18 +37,13 @@ conflicted::conflicts_prefer(dplyr::filter)
 
 ```{r, results = FALSE}
 plots <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "allplotsDS") %>%
-  filter(Incid_Name != "EAST FORK") #seeing very little treated area in this fire now
+  filter(Incid_Name != "EAST FORK") #seeing very little treated area in plots from this fire now, will need to look into it
 plots$northness[is.na(plots$northness)] <- 0
 plots$eastness[is.na(plots$eastness)] <- 0
 
 plots_100m <- filter(plots, buffer_radius == 100)
 plots_250m <- filter(plots, buffer_radius == 250)
 plots_500m <- filter(plots, buffer_radius == 500)
-
-plots_500m %>%
-  st_drop_geometry() %>%
-  group_by(Incid_Name) %>%
-  summarize(mean(prop_shrubland))
 ```
 
 # Correlation of Predictor Variables
@@ -56,7 +55,7 @@ model <- lm(prop_high_sev ~ extreme_area + northness + eastness + elevation + TP
 
 vif(model)
 
-#removing individual prop_conifer_hardwoord
+#removing prop_conifer_hardwood, correlated with prop_conifer
 model2 <- lm(prop_high_sev ~ extreme_area + northness + eastness + elevation + TPI + slope + Tmax_4k + PR_4k + VS_4k + VPD_4k + ERC_4k + CWD_4k + PDSI_4k + prop_extent_treated + prop_conifer + prop_hardwood + prop_shrubland + prop_grassland + TCC, data = plots)
 vif(model2)
 
@@ -76,7 +75,6 @@ vif(model4)
 ## 100m
 
 ```{r}
-set.seed(123)
 data_split_hi100 <- initial_split(plots_100m, strata = "prop_high_sev", prop = 0.80)
 hi100_train <- training(data_split_hi100)
 hi100_test  <- testing(data_split_hi100)
@@ -107,8 +105,6 @@ tune_wf <- workflow() %>%
 
 Tune hyperparameters based on RMSE
 ```{r}
-set.seed(234)
-
 hi100_folds <- spatial_clustering_cv(hi100_train)
 
 # hi100_folds %>% 
@@ -125,7 +121,6 @@ rf_grid <- grid_regular(
   levels = 5
 )
 
-set.seed(456)
 regular_res <- tune_grid(
   tune_wf,
   resamples = hi100_folds,
@@ -250,7 +245,6 @@ ALE plot
 ## 250m
 
 ```{r}
-set.seed(123)
 data_split_hi250 <- initial_split(plots_250m, strata = "prop_high_sev", prop = 0.8)
 hi250_train <- training(data_split_hi250)
 hi250_test  <- testing(data_split_hi250)
@@ -281,7 +275,6 @@ tune_wf <- workflow() %>%
 
 Tune hyperparameters based on RMSE
 ```{r}
-set.seed(234)
 hi250_folds <- spatial_clustering_cv(hi250_train)
 
 doParallel::registerDoParallel()
@@ -293,7 +286,6 @@ rf_grid <- grid_regular(
   levels = 5
 )
 
-set.seed(456)
 regular_res <- tune_grid(
   tune_wf,
   resamples = hi250_folds,
@@ -400,7 +392,6 @@ plot(pdp_hi250)
 ## 500m
 
 ```{r}
-set.seed(123)
 data_split_hi500 <- initial_split(plots_500m, strata = "prop_high_sev", prop = 0.8)
 hi500_train <- training(data_split_hi500)
 hi500_test  <- testing(data_split_hi500)
@@ -431,7 +422,6 @@ tune_wf <- workflow() %>%
 
 Tune hyperparameters based on RMSE
 ```{r}
-set.seed(234)
 hi500_folds <- spatial_clustering_cv(hi500_train)
 
 doParallel::registerDoParallel()
@@ -443,7 +433,6 @@ rf_grid <- grid_regular(
   levels = 5
 )
 
-set.seed(456)
 regular_res <- tune_grid(
   tune_wf,
   resamples = hi500_folds,
@@ -551,7 +540,6 @@ plot(pdp_hi500)
 
 ## 100m
 ```{r}
-set.seed(123)
 data_split_mohi100 <- initial_split(plots_100m, strata = "prop_mod_high_sev", prop = 0.8)
 mohi100_train <- training(data_split_mohi100)
 mohi100_test  <- testing(data_split_mohi100)
@@ -582,7 +570,6 @@ tune_wf <- workflow() %>%
 
 Tune hyperparameters based on RMSE
 ```{r}
-set.seed(234)
 mohi100_folds <- spatial_clustering_cv(mohi100_train)
 
 mohi100_folds %>%
@@ -599,7 +586,6 @@ rf_grid <- grid_regular(
   levels = 5
 )
 
-set.seed(456)
 regular_res <- tune_grid(
   tune_wf,
   resamples = mohi100_folds,
@@ -706,7 +692,6 @@ plot(pdp_mohi100)
 ## 250m
 
 ```{r}
-set.seed(123)
 data_split_mohi250 <- initial_split(plots_250m, strata = "prop_mod_high_sev", prop = 0.8)
 mohi250_train <- training(data_split_mohi250)
 mohi250_test  <- testing(data_split_mohi250)
@@ -737,7 +722,6 @@ tune_wf <- workflow() %>%
 
 Tune hyperparameters based on RMSE
 ```{r}
-set.seed(234)
 mohi250_folds <- spatial_clustering_cv(mohi250_train)
 
 doParallel::registerDoParallel()
@@ -749,7 +733,6 @@ rf_grid <- grid_regular(
   levels = 5
 )
 
-set.seed(456)
 regular_res <- tune_grid(
   tune_wf,
   resamples = mohi250_folds,
@@ -857,7 +840,6 @@ plot(pdp_mohi250)
 ## 500m
 
 ```{r}
-set.seed(123)
 data_split_mohi500 <- initial_split(plots_500m, strata = "prop_mod_high_sev", prop = 0.8)
 mohi500_train <- training(data_split_mohi500)
 mohi500_test  <- testing(data_split_mohi500)
@@ -888,7 +870,6 @@ tune_wf <- workflow() %>%
 
 Tune hyperparameters based on RMSE
 ```{r}
-set.seed(234)
 mohi500_folds <- spatial_clustering_cv(mohi500_train)
 
 doParallel::registerDoParallel()
@@ -900,7 +881,6 @@ rf_grid <- grid_regular(
   levels = 5
 )
 
-set.seed(456)
 regular_res <- tune_grid(
   tune_wf,
   resamples = mohi500_folds,
@@ -1007,12 +987,11 @@ plot(pdp_mohi500)
 
 # Figures
 
-## Variable Importance
+## Combined Multi-Scale VIP and PDPs
+
+Variable Importance
 
 ```{r}
-library(tidyverse)
-library(patchwork)
-
 # --- PANEL A: High-Severity Fire VIP ---
 vip_hi_list <- list(
   "100m"  = vip_hi100,
@@ -1020,13 +999,21 @@ vip_hi_list <- list(
   "500m" = vip_hi500
 )
 
-df_vip_hi <- map_dfr(vip_hi_list, ~ as.data.frame(.x), .id = "Scale") %>%
+df_vip_hi <- map_dfr(vip_hi_list, as.data.frame, .id = "Scale") %>%
+  mutate(mse = dropout_loss^2) %>%                # RMSE -> MSE, before averaging
+  group_by(Scale) %>%
+  mutate(full_mse = mean(mse[variable == "_full_model_"], na.rm = TRUE)) %>%
+  ungroup() %>%
   filter(!variable %in% c("_full_model_", "_baseline_")) %>%
   group_by(Scale, variable) %>%
-  summarise(dropout_loss = mean(dropout_loss, na.rm = TRUE), .groups = "drop") %>%
+  summarise(
+    mse      = mean(mse, na.rm = TRUE),
+    full_mse = first(full_mse),
+    .groups  = "drop"
+  ) %>%
   mutate(
     Scale = factor(Scale, levels = c("100m", "250m", "500m")),
-    dropout_loss_pct = dropout_loss * 100
+    mse_increase_pct = (mse - full_mse) / full_mse * 100
   )
 
 # --- PANEL C: Moderate/High-Severity Fire VIP ---
@@ -1036,17 +1023,25 @@ vip_mohi_list <- list(
   "500m" = vip_mohi500
 )
 
-df_vip_mohi <- map_dfr(vip_mohi_list, ~ as.data.frame(.x), .id = "Scale") %>%
+df_vip_mohi <- map_dfr(vip_mohi_list, as.data.frame, .id = "Scale") %>%
+  mutate(mse = dropout_loss^2) %>%                # RMSE -> MSE, before averaging
+  group_by(Scale) %>%
+  mutate(full_mse = mean(mse[variable == "_full_model_"], na.rm = TRUE)) %>%
+  ungroup() %>%
   filter(!variable %in% c("_full_model_", "_baseline_")) %>%
   group_by(Scale, variable) %>%
-  summarise(dropout_loss = mean(dropout_loss, na.rm = TRUE), .groups = "drop") %>%
+  summarise(
+    mse      = mean(mse, na.rm = TRUE),
+    full_mse = first(full_mse),
+    .groups  = "drop"
+  ) %>%
   mutate(
     Scale = factor(Scale, levels = c("100m", "250m", "500m")),
-    dropout_loss_pct = dropout_loss * 100
+    mse_increase_pct = (mse - full_mse) / full_mse * 100
   )
 ```
 
-## Partial Dependence Plot
+Partial Dependence Plot
 
 ```{r}
 # --- PANEL B: High-Severity PDP ---
@@ -1072,10 +1067,10 @@ df_pdp_mohi <- map_dfr(pdp_mohi_list, ~ .x$agr_profiles, .id = "Scale") %>%
   mutate(Scale = factor(Scale, levels = c("100m", "250m", "500m")))
 ```
 
-## Build ggplots
+Build ggplots
 
 ```{r}
-# Custom color palette matching Figure 2
+# Custom color palette
 scale_colors <- c(
   "100m"  = "#0d0887",
   "250m" = "#cc4678",
@@ -1083,7 +1078,7 @@ scale_colors <- c(
 )
 
 # --- Plot A: VIP High Severity ---
-p_a <- ggplot(df_vip_hi, aes(x = dropout_loss_pct, y = reorder(variable, dropout_loss_pct), color = Scale)) +
+p_a <- ggplot(df_vip_hi, aes(x = mse_increase_pct, y = reorder(variable, mse_increase_pct), color = Scale)) +
   geom_point(size = 2.5) +
   scale_color_manual(values = scale_colors) +
   labs(x = NULL, y = NULL) +
@@ -1096,14 +1091,15 @@ p_b <- ggplot(df_pdp_hi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
   scale_color_manual(values = scale_colors) +
   scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
   labs(x = NULL, y = "p(high-severity fire)") +
+  guides(color = "none") +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
 # --- Plot C: VIP Moderate/High Severity ---
-p_c <- ggplot(df_vip_mohi, aes(x = dropout_loss_pct, y = reorder(variable, dropout_loss_pct), color = Scale)) +
+p_c <- ggplot(df_vip_mohi, aes(x = mse_increase_pct, y = reorder(variable, mse_increase_pct), color = Scale)) +
   geom_point(size = 2.5) +
   scale_color_manual(values = scale_colors) +
-  labs(x = "Variable importance - increase in MSE (%)", y = NULL) +
+  labs(x = "Increase in MSE (%)", y = NULL) +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
@@ -1112,15 +1108,16 @@ p_d <- ggplot(df_pdp_mohi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
   geom_line(linewidth = 1) +
   scale_color_manual(values = scale_colors) +
   scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
-  labs(x = "Proportion of area previously treated", y = "p(moderate/high-severity fire)") +
+  labs(x = "Proportion of Area Treated", y = "p(moderate/high-severity fire)") +
+  guides(color = "none") + 
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 ```
 
-## Combine plots
+Combine plots
 
 ```{r}
-fig2 <- (p_a + p_b) / (p_c + p_d) +
+fig1 <- (p_a + p_b) / (p_c + p_d) +
   plot_layout(guides = "collect") +
   plot_annotation(tag_levels = "a") &
   theme(
@@ -1129,35 +1126,250 @@ fig2 <- (p_a + p_b) / (p_c + p_d) +
   )
 
 # Display final figure
-print(fig2)
+print(fig1)
 ```
 
-# Testing out interaction pdp
+## Interaction PDPs
 
 ```{r}
-library(pdp)
+hi100_train <- hi100_train %>% st_drop_geometry
+hi250_train <- hi250_train %>% st_drop_geometry
+hi500_train <- hi500_train %>% st_drop_geometry
+mohi100_train <- mohi100_train %>% st_drop_geometry
+mohi250_train <- mohi250_train %>% st_drop_geometry
+mohi500_train <- mohi500_train %>% st_drop_geometry
 
 pred_fun <- function(object, newdata) {
   mean(predict(object, new_data = newdata)$.pred)
 }
+```
 
-pd_dab <- pdp::partial(
+### Daily Area Burned x Extent Treated
+
+Create dataframes
+
+```{r}
+pd_dab_hi100 <- pdp::partial(
+  final_fitted_hi100,
+  pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+  train    = hi100_train,    
+  pred.fun = pred_fun
+)
+
+pd_dab_hi250 <- pdp::partial(
+  final_fitted_hi250,
+  pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+  train    = hi250_train,    
+  pred.fun = pred_fun
+)
+
+pd_dab_hi500 <- pdp::partial(
   final_fitted_hi500,
   pred.var = c("prop_extent_treated", "DailyAreaBurned"),
   train    = hi500_train,    
-  pred.fun = pred_fun,
-  plot     = TRUE
+  pred.fun = pred_fun
 )
-pd_dab
 
-pd_elev <- pdp::partial(
+pd_dab_mohi100 <- pdp::partial(
+  final_fitted_mohi100,
+  pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+  train    = mohi100_train,    
+  pred.fun = pred_fun
+)
+
+pd_dab_mohi250 <- pdp::partial(
+  final_fitted_mohi250,
+  pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+  train    = mohi250_train,    
+  pred.fun = pred_fun
+)
+
+pd_dab_mohi500 <- pdp::partial(
+  final_fitted_mohi500,
+  pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+  train    = mohi500_train,    
+  pred.fun = pred_fun
+)
+```
+
+Build ggplots
+```{r}
+lims_hi   <- range(c(pd_dab_hi100$yhat,   pd_dab_hi250$yhat,   pd_dab_hi500$yhat))
+lims_mohi <- range(c(pd_dab_mohi100$yhat, pd_dab_mohi250$yhat, pd_dab_mohi500$yhat))
+
+p1 <- ggplot(pd_dab_hi100, aes(prop_extent_treated, DailyAreaBurned, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_hi) +
+  labs(title = "100m", x = NULL, y = "Daily Area Burned",
+       fill = "Predicted Proportion\nHigh-Severity") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p2 <- ggplot(pd_dab_hi250, aes(prop_extent_treated, DailyAreaBurned, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_hi) +
+  labs(title = "250m", x = NULL, y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p3 <- ggplot(pd_dab_hi500, aes(prop_extent_treated, DailyAreaBurned, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_hi) +
+  labs(title = "500m", x = NULL, y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p4 <- ggplot(pd_dab_mohi100, aes(prop_extent_treated, DailyAreaBurned, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_mohi) +
+  labs(title = "100m", x = "Proportion Treated Area", y = "Daily Area Burned",
+       fill = "Predicted Proportion\nMod/High-Severity") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p5 <- ggplot(pd_dab_mohi250, aes(prop_extent_treated, DailyAreaBurned, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_mohi) +
+  labs(title = "250m", x = "Proportion Treated Area", y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p6 <- ggplot(pd_dab_mohi500, aes(prop_extent_treated, DailyAreaBurned, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_mohi) +
+  labs(title = "500m", x = "Proportion Treated Area", y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+```
+
+Combine plots
+
+```{r}
+row_hi   <- (p1 + p2 + p3) + plot_layout(guides = "collect")
+row_mohi <- (p4 + p5 + p6) + plot_layout(guides = "collect")
+
+fig2 <- row_hi / row_mohi +
+  theme(plot.tag = element_text(face = "bold", size = 14))
+
+print(fig2)
+```
+
+### Elevation x Extent Treated
+
+Create dataframes
+
+```{r}
+pd_elev_hi100 <- pdp::partial(
+  final_fitted_hi100,
+  pred.var = c("prop_extent_treated", "elevation"),
+  train    = hi100_train,    
+  pred.fun = pred_fun
+)
+
+pd_elev_hi250 <- pdp::partial(
+  final_fitted_hi250,
+  pred.var = c("prop_extent_treated", "elevation"),
+  train    = hi250_train,    
+  pred.fun = pred_fun
+)
+
+pd_elev_hi500 <- pdp::partial(
   final_fitted_hi500,
   pred.var = c("prop_extent_treated", "elevation"),
   train    = hi500_train,    
-  pred.fun = pred_fun,
-  plot     = TRUE
+  pred.fun = pred_fun
 )
-pd_elev
+
+pd_elev_mohi100 <- pdp::partial(
+  final_fitted_mohi100,
+  pred.var = c("prop_extent_treated", "elevation"),
+  train    = mohi100_train,    
+  pred.fun = pred_fun
+)
+
+pd_elev_mohi250 <- pdp::partial(
+  final_fitted_mohi250,
+  pred.var = c("prop_extent_treated", "elevation"),
+  train    = mohi250_train,    
+  pred.fun = pred_fun
+)
+
+pd_elev_mohi500 <- pdp::partial(
+  final_fitted_mohi500,
+  pred.var = c("prop_extent_treated", "elevation"),
+  train    = mohi500_train,    
+  pred.fun = pred_fun
+)
+```
+
+Build ggplots
+```{r}
+lims_hi   <- range(c(pd_elev_hi100$yhat,   pd_elev_hi250$yhat,   pd_elev_hi500$yhat))
+lims_mohi <- range(c(pd_elev_mohi100$yhat, pd_elev_mohi250$yhat, pd_elev_mohi500$yhat))
+
+p1 <- ggplot(pd_elev_hi100, aes(prop_extent_treated, elevation, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_hi) +
+  labs(title = "100m", x = NULL, y = "Elevation",
+       fill = "Predicted Proportion\nHigh-Severity") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p2 <- ggplot(pd_elev_hi250, aes(prop_extent_treated, elevation, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_hi) +
+  labs(title = "250m", x = NULL, y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p3 <- ggplot(pd_elev_hi500, aes(prop_extent_treated, elevation, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_hi) +
+  labs(title = "500m", x = NULL, y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p4 <- ggplot(pd_elev_mohi100, aes(prop_extent_treated, elevation, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_mohi) +
+  labs(title = "100m", x = "Proportion Treated Area", y = "Elevation",
+       fill = "Predicted Proportion\nMod/High-Severity") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p5 <- ggplot(pd_elev_mohi250, aes(prop_extent_treated, elevation, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_mohi) +
+  labs(title = "250m", x = "Proportion Treated Area", y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+
+p6 <- ggplot(pd_elev_mohi500, aes(prop_extent_treated, elevation, fill = yhat)) +
+  geom_tile() +
+  scale_fill_viridis_c(limits = lims_mohi) +
+  labs(title = "500m", x = "Proportion Treated Area", y = NULL) +
+  guides(fill = "none") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+```
+
+Combine plots
+
+```{r}
+row_hi   <- (p1 + p2 + p3) + plot_layout(guides = "collect")
+row_mohi <- (p4 + p5 + p6) + plot_layout(guides = "collect")
+
+fig2 <- row_hi / row_mohi +
+  theme(plot.tag = element_text(face = "bold", size = 14))
+
+print(fig2)
 ```
 
 # Average reduction in percent area burned at high severity between 0 and 1 treated area
