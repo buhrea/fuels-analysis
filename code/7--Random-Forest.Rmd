@@ -23,6 +23,7 @@ library(tidymodels)
 library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 library(spatialsample) #Use for spatial cross validation
 library(car) #VIF function
+library(pdp) #for use in heatmaps
 
 conflicted::conflicts_prefer(yardstick::rmse)
 conflicted::conflicts_prefer(dplyr::filter)
@@ -143,14 +144,14 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
-final_workflow <- tune_wf %>%
+final_workflow_hi100 <- tune_wf %>%
   finalize_workflow(best_rmse)
 ```
 
 Evaluate metrics across spatial crossvalidation folds
 ```{r}
 rf_res <- 
-    final_workflow %>% 
+    final_workflow_hi100 %>% 
     fit_resamples(
       resamples = hi100_folds, 
       metrics = metric_set(rmse, rsq),
@@ -173,11 +174,11 @@ rf_res %>%
 
 Fit Final Model
 ```{r}
-final_fit <- final_workflow %>%
+final_fit_hi100 <- final_workflow_hi100 %>%
   last_fit(data_split_hi100)
 
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-hi100_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+collect_metrics(final_fit_hi100)      # test-set RMSE, R², etc.
+hi100_predictions <- collect_predictions(final_fit_hi100)  # observed vs. predicted on the held-out test set
 ggplot(hi100_predictions, aes(prop_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
   geom_abline(linetype = "dashed", color = "red") +
@@ -189,14 +190,14 @@ ggplot(hi100_predictions, aes(prop_high_sev, .pred)) +
     title = "Observed vs. Predicted Proportion of High Severity Fire, 100 m"
   )
 
-final_fitted <- final_fit$.workflow[[1]]
-final_fitted
+final_fitted_hi100 <- final_fit_hi100$.workflow[[1]]
+final_fitted_hi100
 ```
 
 Explainer
 ```{r}
 hi100_explainer <- explain_tidymodels(
-  final_fitted,
+  final_fitted_hi100,
   data = hi100_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = hi100_train$prop_high_sev,
   verbose = FALSE
@@ -311,14 +312,14 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
-final_workflow <- tune_wf %>%
+final_workflow_hi250 <- tune_wf %>%
   finalize_workflow(best_rmse)
 ```
 
 Evaluate metrics across spatial crossvalidation folds
 ```{r}
 rf_res <- 
-    final_workflow %>% 
+    final_workflow_hi250 %>% 
     fit_resamples(
       resamples = hi250_folds, 
       metrics = metric_set(rmse, rsq),
@@ -341,11 +342,11 @@ rf_res %>%
 
 Fit Final Model
 ```{r}
-final_fit <- final_workflow %>%
+final_fit_hi250 <- final_workflow_hi250 %>%
   last_fit(data_split_hi250)
 
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-hi250_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+collect_metrics(final_fit_hi250)      # test-set RMSE, R², etc.
+hi250_predictions <- collect_predictions(final_fit_hi250)  # observed vs. predicted on the held-out test set
 ggplot(hi250_predictions, aes(prop_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
   geom_abline(linetype = "dashed", color = "red") +
@@ -357,14 +358,14 @@ ggplot(hi250_predictions, aes(prop_high_sev, .pred)) +
     title = "Observed vs. Predicted Proportion of High Severity Fire, 250 m"
   )
 
-final_fitted <- final_fit$.workflow[[1]]
-final_fitted
+final_fitted_hi250 <- final_fit_hi250$.workflow[[1]]
+final_fitted_hi250
 ```
 
 Explainer
 ```{r}
 hi250_explainer <- explain_tidymodels(
-  final_fitted,
+  final_fitted_hi250,
   data = hi250_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = hi250_train$prop_high_sev,
   verbose = FALSE
@@ -461,14 +462,14 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
-final_workflow <- tune_wf %>%
+final_workflow_hi500 <- tune_wf %>%
   finalize_workflow(best_rmse)
 ```
 
 Evaluate metrics across spatial crossvalidation folds
 ```{r}
 rf_res <- 
-    final_workflow %>% 
+    final_workflow_hi500 %>% 
     fit_resamples(
       resamples = hi500_folds, 
       metrics = metric_set(rmse, rsq),
@@ -491,11 +492,11 @@ rf_res %>%
 
 Fit Final Model
 ```{r}
-final_fit <- final_workflow %>%
+final_fit_hi500 <- final_workflow_hi500 %>%
   last_fit(data_split_hi500)
 
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-hi500_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+collect_metrics(final_fit_hi500)      # test-set RMSE, R², etc.
+hi500_predictions <- collect_predictions(final_fit_hi500)  # observed vs. predicted on the held-out test set
 ggplot(hi500_predictions, aes(prop_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
   geom_abline(linetype = "dashed", color = "red") +
@@ -507,14 +508,14 @@ ggplot(hi500_predictions, aes(prop_high_sev, .pred)) +
     title = "Observed vs. Predicted Proportion of High Severity Fire, 500 m"
   )
 
-final_fitted <- final_fit$.workflow[[1]]
-final_fitted
+final_fitted_hi500 <- final_fit_hi500$.workflow[[1]]
+final_fitted_hi500
 ```
 
 Explainer
 ```{r}
 hi500_explainer <- explain_tidymodels(
-  final_fitted,
+  final_fitted_hi500,
   data = hi500_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = hi500_train$prop_high_sev,
   verbose = FALSE
@@ -617,14 +618,14 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
-final_workflow <- tune_wf %>%
+final_workflow_mohi100 <- tune_wf %>%
   finalize_workflow(best_rmse)
 ```
 
 Evaluate metrics across spatial crossvalidation folds
 ```{r}
 rf_res <- 
-    final_workflow %>% 
+    final_workflow_mohi100 %>% 
     fit_resamples(
       resamples = mohi100_folds, 
       metrics = metric_set(rmse, rsq),
@@ -647,11 +648,11 @@ rf_res %>%
 
 Fit Final Model
 ```{r}
-final_fit <- final_workflow %>%
+final_fit_mohi100 <- final_workflow_mohi100 %>%
   last_fit(data_split_mohi100)
 
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-mohi100_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+collect_metrics(final_fit_mohi100)      # test-set RMSE, R², etc.
+mohi100_predictions <- collect_predictions(final_fit_mohi100)  # observed vs. predicted on the held-out test set
 ggplot(mohi100_predictions, aes(prop_mod_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
   geom_abline(linetype = "dashed", color = "red") +
@@ -663,14 +664,14 @@ ggplot(mohi100_predictions, aes(prop_mod_high_sev, .pred)) +
     title = "Observed vs. Predicted Proportion of Moderate to High Severity Fire, 100 m"
   )
 
-final_fitted <- final_fit$.workflow[[1]]
-final_fitted
+final_fitted_mohi100 <- final_fit_mohi100$.workflow[[1]]
+final_fitted_mohi100
 ```
 
 Explainer
 ```{r}
 mohi100_explainer <- explain_tidymodels(
-  final_fitted,
+  final_fitted_mohi100,
   data = mohi100_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = mohi100_train$prop_mod_high_sev,
   verbose = FALSE
@@ -767,14 +768,14 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
-final_workflow <- tune_wf %>%
+final_workflow_mohi250 <- tune_wf %>%
   finalize_workflow(best_rmse)
 ```
 
 Evaluate metrics across spatial crossvalidation folds
 ```{r}
 rf_res <- 
-    final_workflow %>% 
+    final_workflow_mohi250 %>% 
     fit_resamples(
       resamples = mohi250_folds, 
       metrics = metric_set(rmse, rsq),
@@ -797,11 +798,11 @@ rf_res %>%
 
 Fit Final Model
 ```{r}
-final_fit <- final_workflow %>%
+final_fit_mohi250 <- final_workflow_mohi250 %>%
   last_fit(data_split_mohi250)
 
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-mohi250_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+collect_metrics(final_fit_mohi250)      # test-set RMSE, R², etc.
+mohi250_predictions <- collect_predictions(final_fit_mohi250)  # observed vs. predicted on the held-out test set
 ggplot(mohi250_predictions, aes(prop_mod_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
   geom_abline(linetype = "dashed", color = "red") +
@@ -813,14 +814,14 @@ ggplot(mohi250_predictions, aes(prop_mod_high_sev, .pred)) +
     title = "Observed vs. Predicted Proportion of Moderate to High Severity Fire, 250 m"
   )
 
-final_fitted <- final_fit$.workflow[[1]]
-final_fitted
+final_fitted_mohi250 <- final_fit_mohi250$.workflow[[1]]
+final_fitted_mohi250
 ```
 
 Explainer
 ```{r}
 mohi250_explainer <- explain_tidymodels(
-  final_fitted,
+  final_fitted_mohi250,
   data = mohi250_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = mohi250_train$prop_mod_high_sev,
   verbose = FALSE
@@ -918,14 +919,14 @@ regular_res %>%
 Select Best Fit
 ```{r}
 best_rmse <- select_best(regular_res, metric = "rmse")
-final_workflow <- tune_wf %>%
+final_workflow_mohi500 <- tune_wf %>%
   finalize_workflow(best_rmse)
 ```
 
 Evaluate metrics across spatial crossvalidation folds
 ```{r}
 rf_res <- 
-    final_workflow %>% 
+    final_workflow_mohi500 %>% 
     fit_resamples(
       resamples = mohi500_folds, 
       metrics = metric_set(rmse, rsq),
@@ -948,11 +949,11 @@ rf_res %>%
 
 Fit Final Model
 ```{r}
-final_fit <- final_workflow %>%
+final_fit_mohi500 <- final_workflow_mohi500 %>%
   last_fit(data_split_mohi500)
 
-collect_metrics(final_fit)      # test-set RMSE, R², etc.
-mohi500_predictions <- collect_predictions(final_fit)  # observed vs. predicted on the held-out test set
+collect_metrics(final_fit_mohi500)      # test-set RMSE, R², etc.
+mohi500_predictions <- collect_predictions(final_fit_mohi500)  # observed vs. predicted on the held-out test set
 ggplot(mohi500_predictions, aes(prop_mod_high_sev, .pred)) +
   geom_point(alpha = 0.25)+
   geom_abline(linetype = "dashed", color = "red") +
@@ -964,14 +965,14 @@ ggplot(mohi500_predictions, aes(prop_mod_high_sev, .pred)) +
     title = "Observed vs. Predicted Proportion of Moderate to High Severity Fire, 500 m"
   )
 
-final_fitted <- final_fit$.workflow[[1]]
-final_fitted
+final_fitted_mohi500 <- final_fit_mohi500$.workflow[[1]]
+final_fitted_mohi500
 ```
 
 Explainer
 ```{r}
 mohi500_explainer <- explain_tidymodels(
-  final_fitted,
+  final_fitted_mohi500,
   data = mohi500_train %>% st_drop_geometry() %>% dplyr::select(all_of(preds), Incid_Name),
   y = mohi500_train$prop_mod_high_sev,
   verbose = FALSE
@@ -1133,126 +1134,61 @@ print(fig2)
 
 # Testing out interaction pdp
 
-Need to give everything a unique name first 
-
 ```{r}
-# library(pdp)
-# library(tidyverse)
-# library(patchwork)
-# 
-# # Define scale models/explainers and training data list
-# # Note: Replace 'hi100_explainer$model' or 'final_fitted' with your actual fitted workflow/model objects
-# explainers_hi <- list(
-#   "100m" = hi100_explainer,
-#   "250m" = hi250_explainer,
-#   "500m" = hi500_explainer
-# )
-# 
-# # Calculate 2D PDP grids across all scales
-# df_pdp2d <- map_dfr(names(explainers_hi), function(scale_name) {
-#   exp <- explainers_hi[[scale_name]]
-#   
-#   # Extract partial dependence grid for 2 variables simultaneously
-#   pd <- pdp::partial(
-#     object = exp$model,
-#     pred.var = c("prop_extent_treated", "DailyAreaBurned"),
-#     train = exp$data,
-#     grid.resolution = 30, # Number of grid steps along each axis
-#     prob = TRUE
-#   )
-#   
-#   # Add scale identifier
-#   pd$Scale <- scale_name
-#   return(pd)
-# }) %>%
-#   mutate(Scale = factor(Scale, levels = c("100m", "250m", "500m")))
-```
+library(pdp)
 
-```{r}
-# # Create side-by-side heatmaps grouped by Scale
-# p_heatmaps <- ggplot(df_pdp2d, aes(x = prop_extent_treated, y = DailyAreaBurned, fill = yhat)) +
-#   geom_tile() +
-#   geom_contour(aes(z = yhat), color = "white", alpha = 0.4, linewidth = 0.3) + # Optional contour lines
-#   scale_fill_viridis_c(
-#     option = "magma", 
-#     name = "p(high-severity fire)",
-#     labels = scales::number_format(accuracy = 0.01)
-#   ) +
-#   scale_x_continuous(expand = c(0, 0)) +
-#   scale_y_continuous(expand = c(0, 0)) +
-#   facet_wrap(~ Scale, nrow = 1) +
-#   labs(
-#     x = "Proportion of Area Previously Treated",
-#     y = "Daily Area Burned (ha)",
-#     title = "2D Interaction Surface: Treatment Extent vs. Daily Area Burned"
-#   ) +
-#   theme_bw() +
-#   theme(
-#     panel.spacing = unit(1, "lines"),
-#     strip.background = element_rect(fill = "grey90", color = NA),
-#     strip.text = element_text(face = "bold", size = 11),
-#     legend.position = "right"
-#   )
-# 
-# # Display heatmap plot
-# print(p_heatmaps)
-```
+pred_fun <- function(object, newdata) {
+  mean(predict(object, new_data = newdata)$.pred)
+}
 
-```{r}
-# plot_scale_2d <- function(scale_label) {
-#   df_sub <- df_pdp2d %>% filter(Scale == scale_label)
-#   
-#   ggplot(df_sub, aes(x = prop_extent_treated, y = DailyAreaBurned, fill = yhat)) +
-#     geom_raster(interpolate = TRUE) +
-#     scale_fill_viridis_c(option = "magma", name = "p(high_sev)") +
-#     labs(
-#       title = paste("Scale:", scale_label),
-#       x = "Prop. Area Treated",
-#       y = "Daily Area Burned"
-#     ) +
-#     theme_minimal() +
-#     theme(plot.title = element_text(face = "bold", hjust = 0.5))
-# }
-# 
-# p_100 <- plot_scale_2d("100m")
-# p_250 <- plot_scale_2d("250m")
-# p_500 <- plot_scale_2d("500m")
-# 
-# p_combined <- (p_100 | p_250 | p_500) + 
-#   plot_layout(guides = "collect")
-# 
-# print(p_combined)
+pd_dab <- pdp::partial(
+  final_fitted_hi500,
+  pred.var = c("prop_extent_treated", "DailyAreaBurned"),
+  train    = hi500_train,    
+  pred.fun = pred_fun,
+  plot     = TRUE
+)
+pd_dab
+
+pd_elev <- pdp::partial(
+  final_fitted_hi500,
+  pred.var = c("prop_extent_treated", "elevation"),
+  train    = hi500_train,    
+  pred.fun = pred_fun,
+  plot     = TRUE
+)
+pd_elev
 ```
 
 # Average reduction in percent area burned at high severity between 0 and 1 treated area
 
 ```{r}
-trt_effect <- function(explainer) {
-  dat <- explainer$data
-
-  d0 <- dat; d0$prop_extent_treated <- 0   # untreated
-  d1 <- dat; d1$prop_extent_treated <- 1   # fully treated
-
-  p0 <- predict(explainer$model, new_data = d0)$.pred
-  p1 <- predict(explainer$model, new_data = d1)$.pred
-
-  tibble::tibble(
-    mean_pred_untreated = mean(p0),
-    mean_pred_treated   = mean(p1),
-    abs_diff            = mean(p1) - mean(p0),                 # in proportion units
-    pct_diff            = (mean(p1) - mean(p0)) / mean(p0) * 100  # relative % change
-  )
-}
-
-results <- dplyr::bind_rows(
-  "High sev, 100m"   = trt_effect(hi100_explainer),
-  "High sev, 250m"   = trt_effect(hi250_explainer),
-  "High sev, 500m"   = trt_effect(hi500_explainer),
-  "Mod-high, 100m"   = trt_effect(mohi100_explainer),
-  "Mod-high, 250m"   = trt_effect(mohi250_explainer),
-  "Mod-high, 500m"   = trt_effect(mohi500_explainer),
-  .id = "model"
-)
-results
-mean(results$pct_diff)
+# trt_effect <- function(explainer) {
+#   dat <- explainer$data
+# 
+#   d0 <- dat; d0$prop_extent_treated <- 0   # untreated
+#   d1 <- dat; d1$prop_extent_treated <- 1   # fully treated
+# 
+#   p0 <- predict(explainer$model, new_data = d0)$.pred
+#   p1 <- predict(explainer$model, new_data = d1)$.pred
+# 
+#   tibble::tibble(
+#     mean_pred_untreated = mean(p0),
+#     mean_pred_treated   = mean(p1),
+#     abs_diff            = mean(p1) - mean(p0),                 # in proportion units
+#     pct_diff            = (mean(p1) - mean(p0)) / mean(p0) * 100  # relative % change
+#   )
+# }
+# 
+# results <- dplyr::bind_rows(
+#   "High sev, 100m"   = trt_effect(hi100_explainer),
+#   "High sev, 250m"   = trt_effect(hi250_explainer),
+#   "High sev, 500m"   = trt_effect(hi500_explainer),
+#   "Mod-high, 100m"   = trt_effect(mohi100_explainer),
+#   "Mod-high, 250m"   = trt_effect(mohi250_explainer),
+#   "Mod-high, 500m"   = trt_effect(mohi500_explainer),
+#   .id = "model"
+# )
+# results
+# mean(results$pct_diff)
 ```
