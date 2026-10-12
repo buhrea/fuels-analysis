@@ -1262,34 +1262,18 @@ allplots <- allplots %>%
     extreme_wind = VS_4k >= quantile(VS_4k, 0.90, na.rm = TRUE)
   )
 
-# check the distribution first
-transects %>%
-  st_drop_geometry() %>%
-  summarise(
-    p75 = quantile(DailyAreaBurned, 0.75, na.rm = TRUE),
-    p90 = quantile(DailyAreaBurned, 0.90, na.rm = TRUE),
-    p95 = quantile(DailyAreaBurned, 0.95, na.rm = TRUE)
-  )
 
-# then flag days above, e.g., the 90th percentile as "extreme wind"
+# Daily Area Burned Extreme - Following Balik 2024 definition for northwestern forested mountains ecoregion (https://doi.org/10.3389/ffgc.2024.1355361)
+# Transects
 transects <- transects %>%
   mutate(
-    extreme_area = DailyAreaBurned >= quantile(DailyAreaBurned, 0.90, na.rm = TRUE)
+    extreme_area = DailyAreaBurned > 4127
   )
 
-# check the distribution first
-allplots %>%
-  st_drop_geometry() %>%
-  summarise(
-    p75 = quantile(DailyAreaBurned, 0.75, na.rm = TRUE),
-    p90 = quantile(DailyAreaBurned, 0.90, na.rm = TRUE),
-    p95 = quantile(DailyAreaBurned, 0.95, na.rm = TRUE)
-  )
-
-# then flag days above, e.g., the 90th percentile as "extreme wind"
+# Plots
 allplots <- allplots %>%
   mutate(
-    extreme_area = DailyAreaBurned >= quantile(DailyAreaBurned, 0.90, na.rm = TRUE)
+    extreme_area = DailyAreaBurned > 4127
   )
 ```
 
