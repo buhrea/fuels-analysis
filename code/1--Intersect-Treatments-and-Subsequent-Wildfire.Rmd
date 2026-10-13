@@ -128,7 +128,7 @@ st_write(
 )
 ```
 
-# Load My Geopackage
+## Load My Geopackage
 
 ```{r}
 #path to file
@@ -141,36 +141,9 @@ st_layers(intersect_path)
 myfires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires_with_prior_treatment")
 ```
 
-Load MTBS to find prior wildfire
-
-```{r}
-# Using perimeter data for 1984-2024
-allfires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
-  st_transform(target_crs) %>% 
-  mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
-  filter(Incid_Type=="Wildfire") %>%
-  filter(YEAR_COMP >= 2000) %>%
-  filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
-  st_make_valid(fires)
-```
-
 # Add Previous Wildfire as Treatments
 
-Load MTBS to find prior wildfire
-
-```{r}
-# # Using perimeter data for 1984-2024
-# allfires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>% 
-#   st_transform(target_crs) %>% 
-#   mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
-#   filter(Incid_Type=="Wildfire") %>%
-#   filter(YEAR_COMP >= 2000) %>%
-#   filter(grepl("CO", Event_ID)) %>% #filter out repeated fire names in other states, maybe should use state boundary instead
-#   st_make_valid(fires)
-```
-
-
-# Load USGS Historical Fire Perimeters (HFP) to find prior wildfire (https://doi.org/10.5066/P9ZXGFY3)
+## Load USGS Historical Fire Perimeters (HFP) to find prior wildfire (https://doi.org/10.5066/P9ZXGFY3)
 
 ```{r}
 #Load state boundary for cropping fire dataset
@@ -193,7 +166,7 @@ allfires <- allfires %>%
 ```
 
 
-#intersect previous wildfire with fires of interest
+## Intersect previous wildfire with fires of interest
 
 ```{r}
 # Intersect previous and subsequent wildfires
@@ -203,12 +176,13 @@ fire_intersect <- st_intersection(myfires, allfires) %>%
 ```
 
 
-#subset mtbs to only previous wildfire
+## Subset mtbs to only previous wildfire
 
 ```{r}
 # Subset mtbs to only previous wildfire
 prior_fires <- allfires %>% 
-  filter(OBJECTID %in% unique(fire_intersect%>% pull(OBJECTID)))
+  filter(OBJECTID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
+  rename("geometry" = "Shape")
 
 #do it again but for GEE use - using dummy ig date
 GEE_wildfires <- prior_fires %>%
@@ -221,7 +195,7 @@ st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires_USGS.shp", appen
 ```
 
 
-# load treatment dataset and add previous wildfire 
+## Load treatment dataset and add previous wildfire 
 ```{r}
 treats <- st_read(intersect_path, layer = "treatments_preceding_fire") %>%
   mutate(OBJECTID = as.character(OBJECTID)) %>%
@@ -230,7 +204,7 @@ treats <- st_read(intersect_path, layer = "treatments_preceding_fire") %>%
 treats <- bind_rows(treats, prior_fires)
 ```
 
-# add previous wildfire to intersection
+## Add previous wildfire to intersection
 ```{r}
 intersection <- st_read(intersect_path, layer = "intersection") %>%
   mutate(OBJECTID = as.character(OBJECTID))
@@ -238,7 +212,7 @@ intersection <- st_read(intersect_path, layer = "intersection") %>%
 intersection <- bind_rows(intersection, fire_intersect)
 ```
 
-# summary statistics
+# Summary statistics
 ```{r}
 # 2. Calculate the area of each individual polygon in the intersection
 intersection <- intersection %>%

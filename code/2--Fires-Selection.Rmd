@@ -38,6 +38,11 @@ myfires <- fires %>%
   filter(Proportion_Treated < 1) %>%
   filter(Fire_Min_Elev > 1500)
 
+myfires %>%
+  group_by(Incid_Name) %>%
+  summarise(Proportion_Treated) %>%
+  arrange(desc(Proportion_Treated))
+
 write.csv(myfires, "data/processed/my_fires.csv")
 
 myfiresIDs <- myfires$Event_ID
