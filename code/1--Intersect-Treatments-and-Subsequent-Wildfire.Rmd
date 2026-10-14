@@ -171,28 +171,3 @@ st_write(
 )
 ```
 
-# Summary statistics
-```{r}
-# 2. Calculate the area of each individual polygon in the intersection
-intersection <- intersect %>%
-  mutate(area_sqm = st_area(.))
-
-# 1. Calculate area and create the hybrid category
-detailed_results <- intersection %>%
-  mutate(
-    area_sqm = as.numeric(st_area(.)),
-    # Create a refined category: Use RXFIRE_MGT if it's an RX FIRE, otherwise use MGT_TYPE
-    detailed_type = case_when(
-      MGT_TYPE == "Prescribed Fire" ~ ACTIVITY,
-      TRUE ~ MGT_TYPE
-    )
-  ) %>%
-  st_drop_geometry() %>%
-  group_by(detailed_type) %>%
-  summarise(total_area = sum(area_sqm),
-            n = n()) %>%
-  mutate(percentage = (total_area / sum(total_area)) * 100) %>%
-  arrange(desc(percentage))
-
-print(detailed_results)
-```

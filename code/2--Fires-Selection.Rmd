@@ -29,13 +29,13 @@ colnames(fires)
 # Filter fires for proportion treated and minimum elevation
 
 So far, the only filters for site/fire selection have been selecting for fires withing the past ~15 years (2010-2024) which intersect with previous fuels reduction. Now, I will impose 2 more filters:
---The proportion of the wildfire treated must be equal to or greater than 0.1, when rounded to two decimal points. This is to improve site sampling within each fire.
+--The proportion of the wildfire treated must be equal to or greater than 0.1, when rounded to two decimal points. This is to improve site sampling within each fire. The proportion treated must be lower than 99% to allow for selection of controls.
 --The minimum elevation of the fire must be greater than 1500 m. This is to exclude lower-elevation vegetation types.
 
 ```{r}
 myfires <- fires %>%
   filter(Proportion_Treated >= 0.1) %>%
-  filter(Proportion_Treated < 1) %>%
+  filter(Proportion_Treated < 0.98) %>%
   filter(Fire_Min_Elev > 1500)
 
 myfires %>%
@@ -117,9 +117,9 @@ st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # import sele
   mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
   mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
   mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
-  mutate(Fire_Year=as.character(year), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
+  mutate(Fire_Year=as.character(Fire_Year), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
   dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
-  st_write("data/processed/GEE/fires_GEE_0713.shp", delete_dsn = TRUE)
+  st_write("data/processed/GEE/fires_GEE_1014.shp", delete_dsn = TRUE)
 
 
 #Do it for treatment fires too
@@ -130,7 +130,7 @@ st_read("data/processed/GEE/treatment_wildfires.shp") %>% # import selected peri
   mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
   mutate(Fire_Year= as.character(YEAR_COMP), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
   dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
-  st_write("data/processed/GEE/fires_GEE_Treatments_0713.shp", delete_dsn = TRUE)
+  st_write("data/processed/GEE/fires_GEE_Treatments_1014.shp", delete_dsn = TRUE)
 ```
 
 # Make a map of fires across Colorado
