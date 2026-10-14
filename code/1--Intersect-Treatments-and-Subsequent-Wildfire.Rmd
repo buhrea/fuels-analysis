@@ -19,7 +19,6 @@ knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analys
 
 ```{r}
 library(sf)
-library(terra)
 library(tidyverse)
 ```
 
@@ -91,7 +90,7 @@ This dataset has more observations than "intersect" because "OBJECTID" is not un
 # Subset treatments to only those that intersect subsequent wildfire 
 treats <- treats %>% 
   filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID))) %>%
-  mutate(OBJECTID = paste0("COFT_", OBJECTID)) %>%
+  mutate(OBJECTID = paste0("Treatment_", OBJECTID)) %>%
   dplyr::select("OBJECTID", "MGT_TYPE", "ACTIVITY", "YEAR_COMP")
 ```
 
@@ -137,13 +136,13 @@ intersect_path <- "data/processed/fuels_analysis.gpkg"
 #check layer name
 st_layers(intersect_path)
 
-#save the layer
+#read in the layer
 myfires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires_with_prior_treatment")
 ```
 
 # Add Previous Wildfire as Treatments
 
-## Load USGS Historical Fire Perimeters (HFP) to find prior wildfire (https://doi.org/10.5066/P9ZXGFY3)
+## Load MTBS to find prior wildfire
 
 ```{r}
 #Load state boundary for cropping fire dataset
@@ -151,18 +150,20 @@ state_boundary <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
   st_transform(target_crs) %>% 
   filter(STUSPS == "CO")
 
-# Load USGS HFP
-allfires <- st_read("D:/Spatial_Data/Fire/USGS_HFP_1800s-2020/Fire_Feature_Data.gdb", layer = "USGS_Wildland_Fire_Combined_Dataset") %>%
-  filter(Assigned_Fire_Type %in% c("Wildfire", "Likely Wildfire"), Fire_Year >= 2000) %>%
+# Using perimeter data for 1984-2024
+allfires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>%
   st_transform(target_crs) %>%
-  st_filter(state_boundary, .predicate = st_intersects)
+  mutate(Ig_Date = as.Date(Ig_Date), YEAR_COMP =year(Ig_Date)) %>%   # convert to date
+  filter(Incid_Type=="Wildfire") %>%
+  filter(YEAR_COMP >= 2000) %>%
+  st_filter(state_boundary, .predicate = st_intersects) %>%
+  st_make_valid(fires)
 
 allfires <- allfires %>%
-  mutate(OBJECTID = paste0("USGS_", USGS_Assigned_ID),
-         YEAR_COMP = Fire_Year,
-         MGT_TYPE = "Wildfire",
-         EVENT_NAME = Listed_Fire_Names) %>%
-  select("OBJECTID", "EVENT_NAME", "MGT_TYPE", "YEAR_COMP")
+  rename(OBJECTID = Event_ID,
+         MGT_TYPE = Incid_Type,
+         EVENT_NAME = Incid_Name) %>%
+  select("OBJECTID", "EVENT_NAME", "MGT_TYPE", "Ig_Date", "YEAR_COMP")
 ```
 
 
@@ -182,16 +183,15 @@ fire_intersect <- st_intersection(myfires, allfires) %>%
 # Subset mtbs to only previous wildfire
 prior_fires <- allfires %>% 
   filter(OBJECTID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
-  rename("geometry" = "Shape")
+  dplyr::select("OBJECTID", "EVENT_NAME","MGT_TYPE", "YEAR_COMP")
 
-#do it again but for GEE use - using dummy ig date
-GEE_wildfires <- prior_fires %>%
-  mutate(Event_ID = OBJECTID,
-         Ig_Date = as.Date(paste0("03-01-", YEAR_COMP))
-         ) %>%
+#do it again but for GEE use
+GEE_wildfires <- allfires %>% 
+  filter(OBJECTID %in% unique(fire_intersect%>% pull(OBJECTID))) %>%
+  rename(Event_ID = OBJECTID) %>%
   dplyr::select(Event_ID, Ig_Date, YEAR_COMP) 
 
-st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires_USGS.shp", append = FALSE)
+st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires.shp", append = FALSE)
 ```
 
 
