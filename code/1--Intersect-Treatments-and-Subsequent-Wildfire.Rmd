@@ -103,7 +103,8 @@ fires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>%
   st_make_valid()
 ```
 
-## Intersect treatments and subsequent wildfires
+## Intersect Treatments and Subsequent Wildfires
+
 ```{r}
 # Intersect treatments and subsequent wildfires
 intersect <- st_intersection(treats, fires) %>%
@@ -111,7 +112,8 @@ intersect <- st_intersection(treats, fires) %>%
   dplyr::select("Event_ID", "Incid_Name", "Fire_Year", "OBJECTID", "EVENT_NAME","MGT_TYPE", "ACTIVITY", "YEAR_COMP")
 ```
 
-## Subset fires to only those that intersect previous treatments
+## Subset Datasets
+
 ```{r}
 # Subset Fires to only those that intersect with prior fuel treatments
 fires <- fires %>% 
@@ -119,18 +121,16 @@ fires <- fires %>%
   dplyr::select("Event_ID", "Incid_Name", "Ig_Date", "Fire_Year")
 ```
 
-## Subset treatments to only those that intersect subsequent fires
-
 ```{r}
 # Subset treatments to only those that intersect subsequent wildfire 
 treats <- treats %>% 
   filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID)))
 ```
 
-# Create GEE dataset of Prior Wildfires
+Create GEE Dataset of Prior Wildfires
 
 ```{r}
-#do it again but for GEE use
+# Do it again but for GEE use
 GEE_wildfires <- allfires %>% 
   filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID))) %>%
   rename(Event_ID = OBJECTID) %>%
