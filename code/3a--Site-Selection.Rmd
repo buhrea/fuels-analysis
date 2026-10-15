@@ -37,6 +37,7 @@ library(exactextractr) #get tcc for plots and transects
 
 ```{r}
 target_crs <- "EPSG:26913"
+set.seed(42)
 ```
 
 Read in MTBS Fire Perimeters (Already filtered)
@@ -86,19 +87,27 @@ final_buffers_list <- vector("list", nrow(fire_interiors))
 for (i in 1:nrow(fire_interiors)) {
   
   fire        <- fire_interiors[i, ]
-  event_id    <- fire$Event_ID
   incid_name  <- fire$Incid_Name
-  fire_year   <- fire$year
+  
+  if (st_is_empty(fire)) {
+    message("Fire ", i, " (", incid_name, "): skipped, interior empty after 550 m buffer")
+    next
+  }
+  
+  event_id    <- fire$Event_ID
+  fire_year   <- fire$Fire_Year
   
   # --- Initial candidate sample ---
   pts_raw <- sample_with_min_dist(fire, min_dist = 1000)
-  if (is.null(pts_raw)) next
-  
+  if (is.null(pts_raw)) {
+  message("Fire ", i, " (", incid_name, "): skipped, no sample points (interior may be empty or too small)")
+  next
+}
   candidates <- st_sf(geometry = pts_raw) %>%
     mutate(
       Incid_Name = incid_name,
       Event_ID   = event_id,
-      year       = fire_year,
+      Fire_Year       = fire_year,
       point_id   = paste0(substr(incid_name, 1, 4), "_", row_number())
     )
   
@@ -128,7 +137,7 @@ for (i in 1:nrow(fire_interiors)) {
         }) %>% do.call(rbind, .)
         
         bufs_proj        <- st_transform(bufs, crs(tcc))
-        bufs_proj$mean_tcc <- exact_extract(tcc, bufs_proj, "mean")
+        bufs_proj$mean_tcc <- exact_extract(tcc, bufs_proj, "mean", progress = FALSE)
         
         if (all(bufs_proj$mean_tcc >= 10, na.rm = TRUE)) {
           newly_added <- rbind(newly_added, candidate)
@@ -143,7 +152,10 @@ for (i in 1:nrow(fire_interiors)) {
     if (nrow(remaining) == 0) break
   }
   
-  if (nrow(kept) == 0) next
+  if (nrow(kept) == 0) {
+  message("Fire ", i, " (", incid_name, "): skipped, no candidates met TCC >= 10")
+  next
+}
   
   # --- Build final buffers for kept points ---
   kept_buffers <- lapply(radii, function(r) {
@@ -151,7 +163,7 @@ for (i in 1:nrow(fire_interiors)) {
   }) %>%
     do.call(rbind, .) %>%
     st_transform(crs(tcc)) %>%
-    mutate(mean_tcc = exact_extract(tcc, ., "mean")) %>%
+    mutate(mean_tcc = exact_extract(tcc, ., "mean", progress = FALSE)) %>%
     st_transform(target_crs)
   
   final_points_list[[i]]  <- kept
@@ -161,8 +173,12 @@ for (i in 1:nrow(fire_interiors)) {
 }
 
 # --- Combine ---
-final_points <- do.call(rbind, final_points_list)
-all_buffers  <- do.call(rbind, final_buffers_list) %>%
+# final_points <- do.call(rbind, final_points_list)
+# all_buffers  <- do.call(rbind, final_buffers_list) %>%
+#   mutate(unique_id = row_number())
+
+final_points <- dplyr::bind_rows(final_points_list)   # skips NULLs
+all_buffers  <- dplyr::bind_rows(final_buffers_list) %>%
   mutate(unique_id = row_number())
 
 # --- Summary ---
@@ -172,44 +188,15 @@ final_points %>%
   summarise(n = n()) %>%
   arrange(Incid_Name)
 ```
- Note: the above code dropped Iron because no points met the minimum TCC. We will also need to drop Trail Springs because it only has one plot.
  
-## Save objects
+ 
+## Save object
 
 ```{r}
-plots_100m <- all_buffers %>% filter(buffer_radius == 100)
-plots_250m <- all_buffers %>% filter(buffer_radius == 250)
-plots_500m <- all_buffers %>% filter(buffer_radius == 500)
-
-
 st_write(
   obj = all_buffers,
   dsn = "data/processed/fuels_analysis.gpkg",
   layer = "all_buffers_selected",
-  driver = "GPKG",
-  delete_layer= TRUE
-)
-
-st_write(
-  obj = plots_100m,
-  dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "plots_100m_selected",
-  driver = "GPKG",
-  delete_layer= TRUE
-)
-
-st_write(
-  obj = plots_250m,
-  dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "plots_250m_selected",
-  driver = "GPKG",
-  delete_layer= TRUE
-)
-
-st_write(
-  obj = plots_500m,
-  dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "plots_500m_selected",
   driver = "GPKG",
   delete_layer= TRUE
 )
@@ -218,48 +205,53 @@ st_write(
 ## Summary Statistics
 
 ```{r treatment-extent}
-# #Collapse treatment dataset
-# treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
-#   st_make_valid() %>%
-#   st_transform(target_crs) %>%
-#   filter(ACTIVITY != "Plant Trees")
-# flat <- st_union(treatments)
-# 
-# # Calculate the total area of each circle plot
-# all_buffers <- all_buffers %>%
-#   mutate(total_plot_area = st_area(.))
-# 
-# # Intersect plots with treatments
-# intersections <- st_intersection(all_buffers, flat)
-# 
-# # Sum treated area per plot
-# treated_proportions <- intersections %>%
-#   mutate(treated_area = st_area(.)) %>%
-#   st_drop_geometry() %>%
-#   # Adding total_plot_area to the group_by preserves it
-#   group_by(unique_id, total_plot_area) %>% 
-#   summarise(total_treated_area = sum(treated_area), .groups = "drop") %>%
-#   # Now total_plot_area exists for this calculation
-#   mutate(prop_treated = as.numeric(total_treated_area / total_plot_area))
-# 
-# # Join back to the original buffers to include 0s
-# # (Plots with no treatment overlap are dropped in st_intersection)
-# final_analysis <- all_buffers %>%
-#   st_drop_geometry() %>%
-#   left_join(treated_proportions) %>%
-#   mutate(prop_treated = replace_na(prop_treated, 0))
+#Collapse treatment dataset
+treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
+  st_make_valid() %>%
+  st_transform(target_crs)
+flat <- st_union(treatments)
 
-# ggplot(final_analysis, aes(x = prop_treated)) +
-#   geom_histogram(bins = 20) +
-#   # Create a separate panel for each radius
-#   facet_wrap(~buffer_radius, labeller = label_both) + 
-#   theme_bw() +
-#   labs(
-#     title = "Distribution of Treatment Proportion by Buffer Size",
-#     x = "Proportion of Area Treated",
-#     y = "Number of Plots"
-#   ) +
-#   scale_x_continuous(labels = scales::percent)
+# Calculate the total area of each circle plot
+all_buffers <- all_buffers %>%
+  mutate(total_plot_area = st_area(.))
+
+# Intersect plots with treatments
+intersections <- st_intersection(all_buffers, flat)
+
+# Sum treated area per plot
+treated_proportions <- intersections %>%
+  mutate(treated_area = st_area(.)) %>%
+  st_drop_geometry() %>%
+  # Adding total_plot_area to the group_by preserves it
+  group_by(unique_id, total_plot_area) %>%
+  summarise(total_treated_area = sum(treated_area), .groups = "drop") %>%
+  # Now total_plot_area exists for this calculation
+  mutate(prop_treated = as.numeric(total_treated_area / total_plot_area))
+
+# Join back to the original buffers to include 0s
+# (Plots with no treatment overlap are dropped in st_intersection)
+final_analysis <- all_buffers %>%
+  st_drop_geometry() %>%
+  left_join(treated_proportions) %>%
+  mutate(prop_treated = replace_na(prop_treated, 0))
+
+final_analysis %>%
+  group_by(Incid_Name) %>%
+  summarize(mean = mean(prop_treated))
+final_analysis %>%
+  summarize(mean = mean(prop_treated))
+
+ggplot(final_analysis, aes(x = prop_treated)) +
+  geom_histogram(bins = 20) +
+  # Create a separate panel for each radius
+  facet_wrap(~buffer_radius, labeller = label_both) +
+  theme_bw() +
+  labs(
+    title = "Distribution of Treatment Proportion by Buffer Size",
+    x = "Proportion of Area Treated",
+    y = "Number of Plots"
+  ) +
+  scale_x_continuous(labels = scales::percent)
 ```
 
 
