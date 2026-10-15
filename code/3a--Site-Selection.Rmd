@@ -24,7 +24,7 @@ Transect Selection:
 knitr::opts_chunk$set(echo = FALSE)
 ```
 
-# Load packages
+# Set-Up
 ```{r}
 library(tidyverse)
 library(sf)
@@ -49,146 +49,165 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>%
   st_transform(target_crs)
 ```
 
+Read in TCC
 ```{r}
 #Read in 1999 TCC Cover to only select sites with >10% tree cover prior to any treatment or fire
 
 tcc <- rast("D:/Spatial_Data/NLCD/nlcd_tcc_CONUS_1999_v2023-5_wgs84/nlcd_tcc_conus_wgs84_v2023-5_19990101_19991231.tif")
 ```
 
-# Multi-Scale Plot Selection
-## Point Selection with Perimeter Buffering and Minimum Distance
-```{r plot-selection}
-# 1. Shrink the fires by 550m to satisfy the edge requirement
-# st_buffer with a negative value creates an inner buffer
-fire_interiors <- st_buffer(fires, dist = -550)
+Read in Treatments
+```{r}
+#Collapse treatment dataset
+treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
+  st_make_valid() %>%
+  st_transform(target_crs)
+flat <- st_union(treatments)
+```
 
-# 2. Functions
-sample_with_min_dist <- function(polygon, min_dist = 1000) {
-  pts <- st_sample(polygon, size = 500)
-  if (length(pts) == 0) return(NULL)
-  kept_pts <- pts[1]
-  if (length(pts) > 1) {
-    for (i in 2:length(pts)) {
-      distances <- st_distance(pts[i], kept_pts)
-      if (all(as.numeric(distances) >= min_dist)) {
-        kept_pts <- c(kept_pts, pts[i])
-      }
-    }
-  }
-  return(kept_pts)
+# Multi-Scale Plot Selection
+
+Stratify sampling to target a good distribution of proportion treated area.
+
+```{r}
+# ---- Parameters ----
+radii        <- c(100, 250, 500)
+strat_radius <- 250                      # scale used to define gradient bins
+bin_breaks   <- c(-Inf, 0, 0.10, 0.25, 0.50, 0.75, 0.99, Inf)
+bin_labels   <- c("0", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
+quota        <- setNames(rep(10, length(bin_labels)), bin_labels)  # max plots per bin, per fire
+quota["0"]   <- 20
+n_bg         <- 500                      # candidates across the whole fire interior
+n_edge       <- 1500                     # candidates near treatment boundaries
+edge_width   <- 300                      # m on either side of a treatment boundary
+min_dist     <- 1000
+
+# ---- Helpers ----
+make_buffers <- function(pts, radii) {
+  lapply(radii, function(r) st_buffer(pts, r) %>% mutate(buffer_radius = r)) %>%
+    bind_rows()
 }
 
-radii <- c(100, 250, 500)
+add_prop_treated <- function(bufs, trt) {
+  bufs$buf_area <- as.numeric(st_area(bufs))
+  bufs$trt_area <- 0
+  if (length(trt) > 0 && !all(st_is_empty(trt))) {
+    inter <- st_intersection(bufs[, c("point_id", "buffer_radius")], trt)
+    key_b <- paste(bufs$point_id, bufs$buffer_radius)
+    key_i <- paste(inter$point_id, inter$buffer_radius)
+    bufs$trt_area[match(key_i, key_b)] <- as.numeric(st_area(inter))
+  }
+  bufs$prop_treated <- round(pmin(bufs$trt_area / bufs$buf_area, 1), 3)
+  bufs
+}
 
-# 3. Per-fire iterative selection loop
+# ---- Per-fire loop ----
+set.seed(42)
 final_points_list  <- vector("list", nrow(fire_interiors))
 final_buffers_list <- vector("list", nrow(fire_interiors))
 
-for (i in 1:nrow(fire_interiors)) {
-  
-  fire        <- fire_interiors[i, ]
-  incid_name  <- fire$Incid_Name
-  
+for (i in seq_len(nrow(fire_interiors))) {
+
+  fire       <- fire_interiors[i, ]
+  incid_name <- fire$Incid_Name
+
   if (st_is_empty(fire)) {
     message("Fire ", i, " (", incid_name, "): skipped, interior empty after 550 m buffer")
     next
   }
-  
-  event_id    <- fire$Event_ID
-  fire_year   <- fire$Fire_Year
-  
-  # --- Initial candidate sample ---
-  pts_raw <- sample_with_min_dist(fire, min_dist = 1000)
-  if (is.null(pts_raw)) {
-  message("Fire ", i, " (", incid_name, "): skipped, no sample points (interior may be empty or too small)")
-  next
-}
-  candidates <- st_sf(geometry = pts_raw) %>%
+  fire_geom <- st_geometry(fire)
+
+  # Treatments near this fire (padding keeps the clip edge far from the interior)
+  box       <- st_as_sfc(st_bbox(st_buffer(fire_geom, 1000)))
+  trt_local <- st_intersection(flat, box)
+  has_trt   <- length(trt_local) > 0 && !all(st_is_empty(trt_local))
+
+  # --- Candidate pool: background + points near treatment edges ---
+  pts <- st_sample(fire_geom, n_bg)
+  if (has_trt) {
+    edge_zone <- st_buffer(st_boundary(trt_local), edge_width) %>%
+      st_intersection(fire_geom)
+    if (!all(st_is_empty(edge_zone))) pts <- c(pts, st_sample(edge_zone, n_edge))
+  }
+  if (length(pts) == 0) {
+    message("Fire ", i, " (", incid_name, "): skipped, no sample points")
+    next
+  }
+
+  pool <- st_sf(geometry = pts) %>%
     mutate(
       Incid_Name = incid_name,
-      Event_ID   = event_id,
-      Fire_Year       = fire_year,
+      Event_ID   = fire$Event_ID,
+      Fire_Year  = fire$Fire_Year,
       point_id   = paste0(substr(incid_name, 1, 4), "_", row_number())
     )
-  
-  # --- Iterative selection: keep adding points that fit + pass TCC ---
-  kept      <- candidates[0, ]
-  remaining <- candidates
-  
-  repeat {
-    newly_added <- remaining[0, ]
-    
-    for (j in 1:nrow(remaining)) {
-      candidate <- remaining[j, ]
-      
-      # Check minimum distance against already-kept + newly_added this round
-      if (nrow(kept) == 0 && nrow(newly_added) == 0) {
-        distance_ok <- TRUE
-      } else {
-        existing <- rbind(kept, newly_added)
-        dists    <- st_distance(candidate, existing)
-        distance_ok <- all(as.numeric(dists) >= 1000)
-      }
-      
-      if (distance_ok) {
-        # Build buffers and check TCC for all 3 scales
-        bufs <- lapply(radii, function(r) {
-          st_buffer(candidate, dist = r) %>% mutate(buffer_radius = r)
-        }) %>% do.call(rbind, .)
-        
-        bufs_proj        <- st_transform(bufs, crs(tcc))
-        bufs_proj$mean_tcc <- exact_extract(tcc, bufs_proj, "mean", progress = FALSE)
-        
-        if (all(bufs_proj$mean_tcc >= 10, na.rm = TRUE)) {
-          newly_added <- rbind(newly_added, candidate)
-        }
-      }
-    }
-    
-    if (nrow(newly_added) == 0) break
-    
-    kept      <- rbind(kept, newly_added)
-    remaining <- remaining[!remaining$point_id %in% kept$point_id, ]
-    if (nrow(remaining) == 0) break
+
+  # --- Proportion treated + TCC for the whole pool, once ---
+  bufs <- make_buffers(pool, radii) %>% add_prop_treated(trt_local)
+  bufs$mean_tcc <- exact_extract(tcc, st_transform(bufs, crs(tcc)), "mean", progress = FALSE)
+
+  tcc_ok <- bufs %>% st_drop_geometry() %>%
+    group_by(point_id) %>%
+    summarise(tcc_ok = !anyNA(mean_tcc) && all(mean_tcc >= 10), .groups = "drop")
+
+  prop_wide <- bufs %>% st_drop_geometry() %>%
+    select(point_id, buffer_radius, prop_treated) %>%
+    pivot_wider(names_from = buffer_radius, values_from = prop_treated,
+                names_prefix = "prop_trt_")
+
+  cands <- pool %>%
+    left_join(tcc_ok, by = "point_id") %>%
+    left_join(prop_wide, by = "point_id") %>%
+    filter(tcc_ok) %>%
+    mutate(bin = cut(.data[[paste0("prop_trt_", strat_radius)]],
+                     breaks = bin_breaks, labels = bin_labels))
+
+  if (nrow(cands) == 0) {
+    message("Fire ", i, " (", incid_name, "): skipped, no candidates met TCC >= 10")
+    next
   }
-  
-  if (nrow(kept) == 0) {
-  message("Fire ", i, " (", incid_name, "): skipped, no candidates met TCC >= 10")
-  next
-}
-  
-  # --- Build final buffers for kept points ---
-  kept_buffers <- lapply(radii, function(r) {
-    st_buffer(kept, dist = r) %>% mutate(buffer_radius = r)
-  }) %>%
-    do.call(rbind, .) %>%
-    st_transform(crs(tcc)) %>%
-    mutate(mean_tcc = exact_extract(tcc, ., "mean", progress = FALSE)) %>%
-    st_transform(target_crs)
-  
+
+  # --- Quota-based selection: scarce (non-zero) bins first, zeros last ---
+  cands    <- cands %>% arrange(bin == "0", runif(n()))
+  geom     <- st_geometry(cands)
+  kept_idx <- integer(0)
+  bin_n    <- setNames(rep(0, length(bin_labels)), bin_labels)
+
+  for (k in seq_len(nrow(cands))) {
+    b <- as.character(cands$bin[k])
+    if (bin_n[b] >= quota[b]) next
+    if (length(kept_idx) > 0 &&
+        any(as.numeric(st_distance(geom[k], geom[kept_idx])) < min_dist)) next
+    kept_idx <- c(kept_idx, k)
+    bin_n[b] <- bin_n[b] + 1
+  }
+
+  kept <- cands[kept_idx, ] %>% select(-tcc_ok)
+
   final_points_list[[i]]  <- kept
-  final_buffers_list[[i]] <- kept_buffers
-  
+  final_buffers_list[[i]] <- bufs %>% filter(point_id %in% kept$point_id)
+
   message("Fire ", i, " (", incid_name, "): ", nrow(kept), " plots selected")
 }
 
-# --- Combine ---
-# final_points <- do.call(rbind, final_points_list)
-# all_buffers  <- do.call(rbind, final_buffers_list) %>%
-#   mutate(unique_id = row_number())
+# ---- Combine ----
+final_points <- bind_rows(final_points_list)
+all_buffers  <- bind_rows(final_buffers_list) %>% mutate(unique_id = row_number())
+```
 
-final_points <- dplyr::bind_rows(final_points_list)   # skips NULLs
-all_buffers  <- dplyr::bind_rows(final_buffers_list) %>%
-  mutate(unique_id = row_number())
+```{r}
+all_buffers %>%
+  st_drop_geometry() %>%
+  ggplot(aes(prop_treated)) +
+  geom_histogram(bins = 20) +
+  facet_wrap(~buffer_radius)
 
-# --- Summary ---
+# plots per fire x bin at the stratification scale
 final_points %>%
   st_drop_geometry() %>%
-  group_by(Incid_Name) %>%
-  summarise(n = n()) %>%
-  arrange(Incid_Name)
+  count(Incid_Name, bin) %>%
+  pivot_wider(names_from = bin, values_from = n, values_fill = 0)
 ```
- 
  
 ## Save object
 
@@ -201,59 +220,6 @@ st_write(
   delete_layer= TRUE
 )
 ```
-
-## Summary Statistics
-
-```{r treatment-extent}
-#Collapse treatment dataset
-treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
-  st_make_valid() %>%
-  st_transform(target_crs)
-flat <- st_union(treatments)
-
-# Calculate the total area of each circle plot
-all_buffers <- all_buffers %>%
-  mutate(total_plot_area = st_area(.))
-
-# Intersect plots with treatments
-intersections <- st_intersection(all_buffers, flat)
-
-# Sum treated area per plot
-treated_proportions <- intersections %>%
-  mutate(treated_area = st_area(.)) %>%
-  st_drop_geometry() %>%
-  # Adding total_plot_area to the group_by preserves it
-  group_by(unique_id, total_plot_area) %>%
-  summarise(total_treated_area = sum(treated_area), .groups = "drop") %>%
-  # Now total_plot_area exists for this calculation
-  mutate(prop_treated = as.numeric(total_treated_area / total_plot_area))
-
-# Join back to the original buffers to include 0s
-# (Plots with no treatment overlap are dropped in st_intersection)
-final_analysis <- all_buffers %>%
-  st_drop_geometry() %>%
-  left_join(treated_proportions) %>%
-  mutate(prop_treated = replace_na(prop_treated, 0))
-
-final_analysis %>%
-  group_by(Incid_Name) %>%
-  summarize(mean = mean(prop_treated))
-final_analysis %>%
-  summarize(mean = mean(prop_treated))
-
-ggplot(final_analysis, aes(x = prop_treated)) +
-  geom_histogram(bins = 20) +
-  # Create a separate panel for each radius
-  facet_wrap(~buffer_radius, labeller = label_both) +
-  theme_bw() +
-  labs(
-    title = "Distribution of Treatment Proportion by Buffer Size",
-    x = "Proportion of Area Treated",
-    y = "Number of Plots"
-  ) +
-  scale_x_continuous(labels = scales::percent)
-```
-
 
 # Fine-Scale Progression Transect Selection
 
