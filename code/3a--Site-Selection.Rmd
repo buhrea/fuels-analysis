@@ -67,7 +67,7 @@ flat <- st_union(treatments)
 
 # Multi-Scale Plot Selection
 
-Stratify sampling to target a good distribution of proportion treated area.
+Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer) and within 300 m of treatment boundaries to oversample intermediate treatment proportions. Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin, subject to a 1000 m minimum spacing.
 
 ```{r}
 # ---- Parameters ----
@@ -195,6 +195,8 @@ final_points <- bind_rows(final_points_list)
 all_buffers  <- bind_rows(final_buffers_list) %>% mutate(unique_id = row_number())
 ```
 
+## Summary Statistics
+
 ```{r}
 all_buffers %>%
   st_drop_geometry() %>%
@@ -216,6 +218,38 @@ st_write(
   obj = all_buffers,
   dsn = "data/processed/fuels_analysis.gpkg",
   layer = "all_buffers_selected",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```
+
+# Update Fire Dataset 
+
+Several fires did not meet the requirements for plot selection. Here we update and save our fire dataset to exclude these fires.
+
+```{r}
+fires <- fires %>% 
+  dplyr::filter(Event_ID %in% unique(final_points$Event_ID))
+
+st_write(
+  obj = fires,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "fires",
+  driver = "GPKG",
+  delete_layer= TRUE
+)
+```
+
+Also update the treatment dataset so it only includes treatments for these fires.
+
+```{r}
+treatments <- treatments %>%
+  st_filter(fires, .predicate = st_intersects)
+
+st_write(
+  obj = treatments,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "treatments",
   driver = "GPKG",
   delete_layer= TRUE
 )
@@ -527,7 +561,7 @@ st_write(transects_final,
          delete_dsn = TRUE)
 ```
 
-# Save object in GPKG
+## Save object in GPKG
 
 ```{r}
 st_write(
