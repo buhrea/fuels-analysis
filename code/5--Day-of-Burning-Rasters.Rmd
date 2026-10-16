@@ -2,15 +2,21 @@
 title: "Create Day of Burning Rasters"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
-output: word_document
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../documents/knitted documents") })
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(knitr)
+knitr::opts_chunk$set(message = FALSE)
 ```
 
 
-```{r setup, include=FALSE}
+```{r packages, include=FALSE}
 library(tidyverse)
 library(sf)
 library(terra)
@@ -18,21 +24,20 @@ library(here)
 library(gstat)
 library(units)
 library(geosphere)
-
 ```
 
 # Overview
 
 This code creates day of burning (DOB) maps for each fire following methods outlined by Parks et al. [-@parks2014MappingDayofburningCoarseresolution]. The following code is modified from code used in Harris et al. [-@harris2025AspenImpedesWildfire].
 
-```{r}
+```{r load-data}
 #CO
-CO<- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>% 
+CO<- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp", quiet = TRUE) %>% 
    filter(STUSPS =="CO") %>%
    st_transform("EPSG:5070") %>% # transform to Albers Equal-Area Conic (USGS)
    st_union() 
 
-fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # import selected perimeters
+fires <- st_read(here("data", "processed", "fuels_analysis.gpkg"), layer = "fires", quiet = TRUE) %>% # import selected perimeters
   mutate(Fire_ID=Event_ID) %>%
   mutate(date = as.Date(Ig_Date, "%Y%m%d")) %>% 
   mutate(Fire_Year=as.character(Fire_Year)) %>%
@@ -41,7 +46,7 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # im
   dplyr::select(Fire_ID, Incid_Name, Fire_Year, Fire_Month, Fire_Day) %>% 
   st_transform("EPSG:5070")
  
-wfigs <- st_read("D:/Spatial_Data/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
+wfigs <- st_read("D:/Spatial_Data/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg", quiet = TRUE) %>% 
   filter(poly_FeatureCategory=="Wildfire Final Fire Perimeter") %>% #(n=16775)
   st_transform("EPSG:5070") %>%# transform to Albers Equal-Area Conic (USGS)
   st_crop(CO) %>% 
@@ -57,7 +62,7 @@ wfigs <- st_read("D:/Spatial_Data/WFIGS/WFIGS_Interagency_Perimeters_-6137106134
 
 Requires CBI Rasters Created in GEE (https://code.earthengine.google.com/)
 
-```{r}
+```{r create-dob}
 for (j in unique(fires$Fire_ID)){ #for each unique fire_id, call it j
   if(!file.exists(here("data", "processed", "DOB",  paste0(j, "_DOB.tif")))){ #if the day of burning file does not already exist
     basegrid <- rast(here("data", "processed", "GEE", "FireSeverity", "CBI", paste0(j, "_CBI_bc.tif")))  #load the cbi raster created in GEE

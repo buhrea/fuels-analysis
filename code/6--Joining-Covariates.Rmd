@@ -91,7 +91,7 @@ transects <- transects_proj %>%
   select(-row_id)
 
 transects <- transects %>%
-  mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
+  mutate(date = as.Date(paste(Fire_Year, dob, sep = "-"), format = "%Y-%j"))
 
 #Plots join
 # Reproject plots to match the raster CRS
@@ -136,7 +136,7 @@ allplots_processed <- allplots_proj %>%
 
 # Calculate calendar date from Julian day
 allplots <- allplots_processed %>%
-  mutate(date = as.Date(paste(year, dob, sep = "-"), format = "%Y-%j"))
+  mutate(date = as.Date(paste(Fire_Year, dob, sep = "-"), format = "%Y-%j"))
 ```
 
 ## Daily Area Burned
@@ -260,11 +260,11 @@ base_path <- "D:/Spatial_Data/GridMet"
 ```{r}
 final_data <- NULL
 
-# Loop by Year
-for(yr in unique(transects$year)){
+# Loop by Fire_Year
+for(yr in unique(transects$Fire_Year)){
 
-  # Subset points for this year
-  transects_yr <- transects[transects$year == yr, ]
+  # Subset points for this Fire_Year
+  transects_yr <- transects[transects$Fire_Year == yr, ]
 
   # Loop through variables
   for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
@@ -327,10 +327,10 @@ transects <- transects %>%
 final_data <- NULL
 
 # Loop by Year
-for(yr in unique(allplots$year)){
+for(yr in unique(allplots$Fire_Year)){
 
   # Subset points for this year
-  allplots_yr <- allplots[allplots$year == yr, ]
+  allplots_yr <- allplots[allplots$Fire_Year == yr, ]
 
   # Loop through your variables
   for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
@@ -399,10 +399,10 @@ base_path <- "D:/Spatial_Data/TerraClimate"
 final_data <- NULL
 
 # Loop by Year
-for(yr in unique(transects$year)){
+for(yr in unique(transects$Fire_Year)){
 
   # Subset points for this year
-  transects_yr <- transects[transects$year == yr, ]
+  transects_yr <- transects[transects$Fire_Year == yr, ]
 
   # Loop through variables
   for(v in c("CWD", "PDSI")){
@@ -460,10 +460,10 @@ transects <- transects %>%
 final_data <- NULL
 
 # Loop by Year
-for(yr in unique(allplots$year)){
+for(yr in unique(allplots$Fire_Year)){
 
-  # Subset points for this year
-  allplots_yr <- allplots[allplots$year == yr, ]
+  # Subset points for this Fire_Year
+  allplots_yr <- allplots[allplots$Fire_Year == yr, ]
 
   for(v in c("CWD", "PDSI")){
 
@@ -525,9 +525,9 @@ base_path <- "D:/Spatial_Data/Daymet/Daymet"
 ```{r}
 final_data <- NULL
 
-for(yr in unique(transects$year)){
+for(yr in unique(transects$Fire_Year)){
 
-  transects_yr <- transects[transects$year == yr, ]
+  transects_yr <- transects[transects$Fire_Year == yr, ]
 
   for(v in c("PRCP", "TMAX", "TMIN", "VP")){
     prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
@@ -566,9 +566,9 @@ transects <- st_transform(transects, target_crs)
 ```{r}
 final_data <- NULL
 
-for(yr in unique(allplots$year)){
+for(yr in unique(allplots$Fire_Year)){
   
-  allplots_yr <- allplots[allplots$year == yr, ]
+  allplots_yr <- allplots[allplots$Fire_Year == yr, ]
   
   for(v in c("PRCP", "TMAX", "TMIN", "VP")){
     prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
@@ -675,7 +675,7 @@ treatment_summary <- joined_raw %>%
     # If COUNT is 0, min() returns Inf, so we correct it back to NA
     EARLY_YEAR = ifelse(COUNT > 0, min(YEAR_COMP, na.rm = TRUE), NA_real_),
     
-    AGE = ifelse(COUNT > 0, (year - YEAR_COMP), NA_real_)
+    AGE = ifelse(COUNT > 0, (Fire_Year - YEAR_COMP), NA_real_)
       ) %>%
   
   # Arrange by YEAR_COMP (descending) so the latest year is always on top (Row 1)
@@ -916,7 +916,7 @@ transects_prep <- transects %>%
   mutate(
     # Handle both your point datasets (use YEAR_COMP if it exists, otherwise default to fire year)
     base_year = if_all(any_of("EARLY_YEAR"), ~ !is.na(.)) %>% 
-                ifelse(coalesce(EARLY_YEAR, year), year),
+                ifelse(coalesce(EARLY_YEAR, Fire_Year), Fire_Year),
                 
     # If treated, use YEAR_COMP - 1 (or your explicit EARLY_YEAR - 1 variable). Otherwise fire year - 1.
     target_tcc_year = as.character(base_year - 1),
@@ -962,7 +962,7 @@ allplots_prep <- allplots %>%
   mutate(
     # If TOTAL_COUNT > 0, we assume treated. Use mean_YEAR_COMP or your target year calculation.
     base_year = if_all(any_of("EARLY_YEAR"), ~ !is.na(.)) %>% 
-                ifelse(coalesce(as.integer(EARLY_YEAR), year), year),
+                ifelse(coalesce(as.integer(EARLY_YEAR), Fire_Year), Fire_Year),
     target_tcc_year = as.character(base_year - 1),
     row_id = row_number()
   )

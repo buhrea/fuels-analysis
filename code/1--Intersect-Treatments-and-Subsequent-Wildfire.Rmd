@@ -127,23 +127,10 @@ treats <- treats %>%
   filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID)))
 ```
 
-Create GEE Dataset of Prior Wildfires
-
-```{r}
-# Do it again but for GEE use
-GEE_wildfires <- allfires %>% 
-  filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID))) %>%
-  rename(Event_ID = OBJECTID) %>%
-  dplyr::select(Event_ID, Ig_Date, YEAR_COMP) 
-
-st_write(GEE_wildfires, "data/processed/GEE/treatment_wildfires.shp", append = FALSE)
-```
-
 # Save Geopackage
 
 ```{r}
 # Save the intersection result as the first layer
-
 st_write(
   obj = intersect,
   dsn = "data/processed/fuels_analysis.gpkg",

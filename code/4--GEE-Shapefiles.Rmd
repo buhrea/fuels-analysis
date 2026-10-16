@@ -1,0 +1,76 @@
+---
+title: "GEE Shapefile Creation"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../documents/knitted documents") })
+---
+
+Here we create shapefiles used to create burn severity rasters in Google Earth Engine (https://code.earthengine.google.com/) following Parks methods (add doi). The burn severity rasters are then used to create DoB rasters in the next script.
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r packages, include = FALSE}
+library(tidyverse)
+library(sf)
+library(here)
+```
+
+# Load MTBS
+
+```{r mtbs}
+# Using perimeter data for 1984-2024
+mtbs <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp", quiet = TRUE) %>% 
+  st_transform("EPSG:26913") %>% 
+  mutate(Ig_Date = as.Date(Ig_Date), Fire_Year = year(Ig_Date)) %>%  
+  filter(Incid_Type=="Wildfire") %>%
+  st_make_valid()
+```
+
+# Subset to My Primary Fires and "Treatment" Fires
+
+Primary Fires
+```{r primary-fires}
+fires <- st_read(here("data", "processed", "fuels_analysis.gpkg"), layer = "fires", quiet = TRUE)
+
+primary_fires <- mtbs %>%
+  filter(Event_ID %in% fires$Event_ID)
+```
+
+Treatment Fires
+```{r treat-fires}
+treatments <- st_read(here("data", "processed", "fuels_analysis.gpkg"), layer = "treatments", quiet = TRUE)
+
+treatment_fires <- mtbs %>%
+  filter(Event_ID %in% treatments$OBJECTID)
+```
+
+# Prepare for GEE and Save
+
+```{r gee}
+primary_fires %>% 
+  mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
+  mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
+  mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
+  mutate(Fire_Year=year(date)) %>%
+  mutate(Fire_Year=as.character(Fire_Year), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
+  dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
+  st_write(here("data", "processed", "GEE", "primary_fires_GEE.shp"), delete_dsn = TRUE, quiet = TRUE)
+
+treatment_fires %>% 
+  mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
+  mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
+  mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
+  mutate(Fire_Year=year(date)) %>%
+  mutate(Fire_Year=as.character(Fire_Year), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
+  dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
+  st_write(here("data", "processed", "GEE", "treatment_fires_GEE.shp"), delete_dsn = TRUE, quiet = TRUE)
+```
+

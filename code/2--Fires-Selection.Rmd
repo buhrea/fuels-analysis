@@ -2,14 +2,19 @@
 title: "Fires Selection"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
-output: word_document
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+  pdf_document:
+    toc: true
+    toc_depth: '2'
 ---
 
 ```{r setup, include=FALSE}
 library(knitr)
 knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(message = FALSE)
-knitr::opts_chunk$set(root.dir = 'C:/Users/Elizabeth Buhr/Documents/fuels-analysis/')
 ```
 
 So far, the only filters for site/fire selection have been selecting for fires withing the past ~15 years (2010-2024) which intersect with previous fuels reduction. Now we will impose 2 more filters:
@@ -21,6 +26,7 @@ So far, the only filters for site/fire selection have been selecting for fires w
 library(sf) 
 library(terra)
 library(tidyverse)
+library(here)
 ```
 
 # Load My GeoPackage
@@ -182,10 +188,6 @@ myfiresIDs <- myfires$Event_ID
 fires_sub <- fires %>% 
   filter(Event_ID %in% myfiresIDs)
 
-#subset the intersection
-inter_sub <- intersection %>% 
-  filter(Event_ID %in% myfiresIDs)
-
 #subset the treatments
 treat_sub <- treatments %>%
   filter(OBJECTID %in% inter_sub$OBJECTID)
@@ -211,32 +213,4 @@ st_write(
   driver = "GPKG",
   delete_layer= TRUE
 )
-```
-
-# GEE Shapefile Creation
-
-These shapefiles will be used to create burn severity rasters in Google Earth Engine following Parks methods. 
-
-*Note: Update date in file name when running*
-
-```{r}
-## Prepares the selected fires perimeter dataset for use in Sean Parks' GEE code for calculating fire severity
-st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # import selected perimeters
-  mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
-  mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
-  mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
-  mutate(Fire_Year=as.character(Fire_Year), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
-  dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
-  st_write("data/processed/GEE/fires_GEE_1015.shp", delete_dsn = TRUE)
-
-
-#Do it for treatment fires too
-## Prepares the selected fires perimeter dataset for use in Sean Parks' GEE code for calculating fire severity
-st_read("data/processed/GEE/treatment_wildfires.shp") %>% # import selected perimeters
-  mutate(date = as.Date(Ig_Date), "%Y%m%d") %>% # convert ignition date to date object
-  mutate(Start_Day=min(lubridate::yday(date))-14) %>% # set first possible date 
-  mutate(End_Day=max(lubridate::yday(date))+14) %>% # set last possible date 
-  mutate(Fire_Year= as.character(YEAR_COMP), Fire_ID=Event_ID) %>% # create variables with column names used in Parks code
-  dplyr::select(Fire_ID, Fire_Year, Start_Day, End_Day) %>% # include only Fire ID, Fire Year, Start Day and End Day columns in dataset
-  st_write("data/processed/GEE/fires_GEE_Treatments_1015.shp", delete_dsn = TRUE)
 ```
