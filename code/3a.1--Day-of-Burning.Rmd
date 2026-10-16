@@ -1,5 +1,5 @@
 ---
-title: "2b--Day-of-Burning"
+title: "Create Day of Burning Rasters"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output: word_document
@@ -7,7 +7,10 @@ output: word_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+```
 
+
+```{r setup, include=FALSE}
 library(tidyverse)
 library(sf)
 library(terra)
@@ -36,8 +39,7 @@ fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>% # im
   mutate(Fire_Month = lubridate::month(date)) %>%
   mutate(Fire_Day = lubridate::day(date)) %>%
   dplyr::select(Fire_ID, Incid_Name, Fire_Year, Fire_Month, Fire_Day) %>% 
-  st_transform("EPSG:5070") %>%
-  filter(Fire_ID != "CO4071610803320140723") #Alkali - too few hotspots for kriging having issues with this one
+  st_transform("EPSG:5070")
  
 wfigs <- st_read("D:/Spatial_Data/WFIGS/WFIGS_Interagency_Perimeters_-6137106134146866405.gpkg") %>% 
   filter(poly_FeatureCategory=="Wildfire Final Fire Perimeter") %>% #(n=16775)
