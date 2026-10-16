@@ -2,64 +2,130 @@
 title: "Joining Covariates"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
-output: pdf_document
+output:
+  word_document:
+    toc: true
+    toc_depth: 2
+knit: (function(inputFile, encoding) {
+  rmarkdown::render(inputFile, encoding = encoding, output_dir = "../documents/knitted documents") })
 ---
 
-This document will join covariates from various data sources with the selected multi-scale plots and fine-scale progression transects. Covariates are in several groups:
-
-Pre-Processing - Day of Burning
-
-Topographic - LANDFIRE - Aspect, Elevation, and Slope
-
-Weather & Climate - gridMET - maximum temperature, precipitation, wind velocity, vpd, pdsi, erc
-
-Pre-Treatment Fuels - LANDFIRE ESP, NLCD Canopy Cover
-
-Treatment Characteristics - Forest Tracker
-
-Response Variable - CBI+
-
+This document will join covariates from various data sources with the selected multi-scale plots and fine-scale progression transects. 
 
 ```{r setup, include=FALSE}
+library(knitr)
 knitr::opts_chunk$set(echo = TRUE)
+
+# Change temp directory to a folder in hard drive
+Sys.setenv(TMPDIR = "D:/temp")
+terra::terraOptions(tempdir = "D:/temp")
 ```
 
 # Set-Up
 
-```{r}
+```{r packages, warning=FALSE}
 library(tidyverse)
+library(here)
 library(sf)
 library(terra)
-library(exactextractr)
+library(spatialEco) #calculate heat load index
+library(exactextractr) #extract raster values for shapefiles
 library(appeears) #Nasa Earthdata download
 
 conflicted::conflicts_prefer(terra::extract)
+conflicted::conflicts_prefer(dplyr::filter)
 ```
 
-```{r}
-target_crs <- "EPSG:26913"
+Load Data
 
-CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
-  filter(STUSPS == "CO")
-
-allplots <- st_read("data/processed/fuels_analysis.gpkg",
+```{r load-data}
+allplots <- st_read(here("data", "processed", "fuels_analysis.gpkg"),
   layer = "all_plots_selected")
 
-transects <- st_read("data/processed/fuels_analysis.gpkg",
+transects <- st_read(here("data", "processed", "fuels_analysis.gpkg"),
   layer = "transects_selected")
 
+state <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
+  filter(STUSPS == "CO") %>% 
+  st_transform("EPSG:5070") #for joining with Landfire rasters before they are projected to target crs
 
-# Change this path to a folder in hard drive
-Sys.setenv(TMPDIR = "D:/temp")
-raster::rasterOptions(tmpdir = "D:/temp") # If using 'raster'
-terra::terraOptions(tempdir = "D:/temp")  # If using 'terra'
+target_crs <- "EPSG:26913"
 ```
 
-# Day of Burning
+# Topography
 
-We will need to know Day of Burning when we get to our weather variables. 
+Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted into "northness" which ranges from -1 (perfectly south) to 1 (perfectly north). Heat Load Index (HLI) was calculated using the spatialEco package (https://github.com/jeffreyevans/spatialEco). HLI is a measure of solar radiation which accounts for how slope steepness and aspect influence temperature, ranging from 0 (coolest) to 1 (warmest).
 
-```{r}
+```{r load-topo}
+aspect <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif") %>%
+  crop(state) %>%
+  mask(state) %>%
+  project(target_crs)
+
+#in landfire, flat areas are coded as -1. change to na
+aspect[aspect == -1] <- NA
+
+northness <- cos(aspect * pi / 180)
+
+slope <- rast("D:/Spatial_Data/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %>%
+  crop(state) %>%
+  mask(state) %>%
+  project(target_crs)
+
+elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif") %>%
+  crop(state) %>%
+  mask(state) 
+
+hli <- hli(elevation) %>%
+  project(target_crs)
+
+elevation <- elevation %>% 
+  project(target_crs) #waited to reproject until after we calculated hli
+```
+
+Join topography data to transects.
+
+```{r trans-topo}
+north_trans <- extract(northness, transects)
+slope_trans <- extract(slope, transects)
+elev_trans <- extract(elevation, transects)
+hli_trans <- extract(hli, transects)
+
+transects <- transects %>%
+  cbind(north_trans, elev_trans, slope_trans, hli_trans) %>%
+  select(-starts_with("ID")) %>%
+  rename("Northness" = "LF2020_Asp_CONUS",
+         "Slope" = "LF2020_SlpD_CONUS",
+         "Elevation" = "LF2020_Elev_CONUS",
+         "HLI" = )
+```
+
+Join topography data to plots.
+
+```{r plots-topo}
+north_plots <- extract(northness, allplots, fun = mean)
+elev_plots <- extract(elevation, allplots, fun = mean)
+slope_plots <- extract(slope, allplots, fun = mean)
+hli_plots <- extract(hli, allplots, fun = mean)
+
+allplots <- allplots %>%
+  cbind(north_plots, elev_plots, slope_plots) %>%
+  select(-starts_with("ID")) %>%
+  rename("Northness" = "LF2020_Asp_CONUS",
+         "Slope" = "LF2020_SlpD_CONUS",
+         "Elevation" = "LF2020_Elev_CONUS",
+         "HLI" = )
+```
+
+# Fire Weather
+
+As a stand in for individual fire weather variables, we will use the Daily Area Burned and a binary "Extremeness" variable based on Daily Area Burned following Balik 2024 definition for the Northwestern Forested Mountains Ecoregion (https://doi.org/10.3389/ffgc.2024.1355361).
+
+This section uses the Day of Burning rasters created in the previous script.
+
+## Day of Burning
+
+```{r dob}
 doblist <- list.files(path = "C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/DOB", pattern = "\\.tif$", full.names = TRUE)
 dob_rast <- lapply(doblist, terra::rast)
 
@@ -73,7 +139,7 @@ names(dob_rast) <- fire_names
 # Extract DOB for each transect point from its matching raster
 # This loops over each unique fire, extracts from the right raster, then recombines
 
-transects <- transects_proj %>%
+transects_dob <- transects_proj %>%
   mutate(row_id = row_number()) %>%  # preserve original order
   split(.$Event_ID) %>%              
   imap_dfr(function(pts, fire) {
@@ -90,7 +156,7 @@ transects <- transects_proj %>%
   arrange(row_id) %>%   # restore original order
   select(-row_id)
 
-transects <- transects %>%
+transects <- transects_dob %>%
   mutate(date = as.Date(paste(Fire_Year, dob, sep = "-"), format = "%Y-%j"))
 
 #Plots join
@@ -107,7 +173,7 @@ get_majority <- function(x, na.rm = TRUE) {
 }
 
 # Extract DOB for each plot polygon from its matching raster
-allplots_processed <- allplots_proj %>%
+allplots_dob <- allplots_proj %>%
   mutate(row_id = row_number()) %>%  # preserve original order
   split(.$Event_ID) %>%              
   imap_dfr(function(polys, fire) {
@@ -141,7 +207,7 @@ allplots <- allplots_processed %>%
 
 ## Daily Area Burned
 
-```{r}
+```{r daily-area}
 daily_area_burned <- imap_dfr(dob_rast, function(rast_match, fire) {
   area_rast <- terra::cellSize(rast_match, unit = "ha")
   
@@ -167,7 +233,7 @@ allplots <- allplots %>%
   left_join(
     daily_area_burned %>% select(Event_ID, dob, DailyAreaBurned = area_ha),
     by = c("Event_ID", "dob")
-  )
+  ) 
 
 #Reproject transects back to target crs
 transects <- st_transform(transects, target_crs)
@@ -175,81 +241,28 @@ transects <- st_transform(transects, target_crs)
 allplots <- st_transform(allplots, target_crs)
 ```
 
+### Extremeness
 
-# Topography
-
-Aspect, elevation, and slope were downloaded from LANDFIRE. Aspect was converted into "northness" and "eastness". TPI is calculated using the "terrain" function from terra.
-
-## Load data
-
-```{r}
-CO <- CO %>% st_transform("EPSG:5070")
-
-aspect <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif") %>%
-  crop(CO) %>%
-  mask(CO) %>%
-  project(target_crs)
-
-#in landfire, flat areas are coded as -1. change to na
-aspect[aspect == -1] <- NA
-
-northness <- cos(aspect * pi / 180)
-eastness <- sin(aspect * pi / 180)
-
-elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif") %>%
-  crop(CO) %>%
-  mask(CO) %>%
-  project(target_crs)
-
-tpi <- terrain(elevation, v = "TPI")
-
-slope <- rast("D:/Spatial_Data/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif") %>%
-  crop(CO) %>%
-  mask(CO) %>%
-  project(target_crs)
-```
-
-## Transects Join
-
-```{r}
-north_trans <- extract(northness, transects)
-east_trans <- extract(eastness, transects)
-elev_trans <- extract(elevation, transects)
-tpi_trans <- extract(tpi, transects)
-slope_trans <- extract(slope, transects)
-
+```{r extreme}
+# Daily Area Burned Extreme - Following Balik 2024 definition for northwestern forested mountains ecoregion (https://doi.org/10.3389/ffgc.2024.1355361)
+# Transects
 transects <- transects %>%
-  cbind(north_trans, east_trans, elev_trans, tpi_trans, slope_trans) %>%
-  select(-starts_with("ID")) %>%
-  rename("northness" = "LF2020_Asp_CONUS",
-         "eastness" = "LF2020_Asp_CONUS.1",
-         "elevation" = "LF2020_Elev_CONUS",
-         "slope" = "LF2020_SlpD_CONUS")
-```
+  mutate(
+    Extreme = DailyAreaBurned > 4127
+  )
 
-## Plots Join
-
-```{r}
-north_plots <- extract(northness, allplots, fun = mean)
-east_plots <- extract(eastness, allplots, fun = mean)
-elev_plots <- extract(elevation, allplots, fun = mean)
-tpi_plots <- extract(tpi, allplots, fun = mean)
-slope_plots <- extract(slope, allplots, fun = mean)
-
+# Plots
 allplots <- allplots %>%
-  cbind(north_plots, east_plots, elev_plots, tpi_plots, slope_plots) %>%
-  select(-starts_with("ID")) %>%
-  rename("northness" = "LF2020_Asp_CONUS",
-         "eastness" = "LF2020_Asp_CONUS.1",
-         "elevation" = "LF2020_Elev_CONUS",
-         "slope" = "LF2020_SlpD_CONUS")
+  mutate(
+    Extreme = DailyAreaBurned > 4127
+  )
 ```
 
-# Weather & Climate
+# Climate
 
 Weather variables were obtained from Daymet. Updated from Gridmet for better resolution to address overfitting in random forest models.
 
-## Load data - Gridmet
+## Gridmet
 
 ```{r}
 base_path <- "D:/Spatial_Data/GridMet"
@@ -387,7 +400,7 @@ allplots <- allplots %>%
          ERC_4k = ERC)
 ```
 
-## Load data - TerraClimate
+## TerraClimate
 
 ```{r}
 base_path <- "D:/Spatial_Data/TerraClimate"
@@ -514,7 +527,7 @@ allplots <- allplots %>%
          PDSI_4k = PDSI)
 ```
 
-## Load data - Daymet
+## Daymet
 
 ```{r}
 base_path <- "D:/Spatial_Data/Daymet/Daymet"
@@ -807,13 +820,9 @@ Data is obtained from Landfire. Pre-fire vegetation is represented by the Existi
 ### Load data
 
 ```{r}
-CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
-  filter(NAME == "Colorado") %>%
-  st_transform("EPSG:5070") #match to crs of landfire for cropping
-
 evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_20250916/US_105_EVT/Tif/us_105evt.tif") %>%
-  crop(CO) %>%
-  mask(CO) %>%
+  crop(state) %>%
+  mask(state) %>%
   project(target_crs)
 
 #Using physiognomy groups
@@ -1225,57 +1234,6 @@ allplots_with_rdnbr <- allplots_with_cbi %>%
 # 4. Project your plots back to your target project CRS
 allplots <- st_transform(allplots_with_rdnbr, target_crs)
 ```
-
-# Extremeness
-
-Define by wind speed and daily area burned.
-
-```{r}
-# check the distribution first
-transects %>%
-  st_drop_geometry() %>%
-  summarise(
-    p75 = quantile(VS_4k, 0.75, na.rm = TRUE),
-    p90 = quantile(VS_4k, 0.90, na.rm = TRUE),
-    p95 = quantile(VS_4k, 0.95, na.rm = TRUE)
-  )
-
-# then flag days above, e.g., the 90th percentile as "extreme wind"
-transects <- transects %>%
-  mutate(
-    extreme_wind = VS_4k >= quantile(VS_4k, 0.90, na.rm = TRUE)
-  )
-
-# check the distribution first
-allplots %>%
-  st_drop_geometry() %>%
-  summarise(
-    p75 = quantile(VS_4k, 0.75, na.rm = TRUE),
-    p90 = quantile(VS_4k, 0.90, na.rm = TRUE),
-    p95 = quantile(VS_4k, 0.95, na.rm = TRUE)
-  )
-
-# then flag days above, e.g., the 90th percentile as "extreme wind"
-allplots <- allplots %>%
-  mutate(
-    extreme_wind = VS_4k >= quantile(VS_4k, 0.90, na.rm = TRUE)
-  )
-
-
-# Daily Area Burned Extreme - Following Balik 2024 definition for northwestern forested mountains ecoregion (https://doi.org/10.3389/ffgc.2024.1355361)
-# Transects
-transects <- transects %>%
-  mutate(
-    extreme_area = DailyAreaBurned > 4127
-  )
-
-# Plots
-allplots <- allplots %>%
-  mutate(
-    extreme_area = DailyAreaBurned > 4127
-  )
-```
-
 
 # Save Datasets
 
