@@ -32,6 +32,8 @@ library(terra)
 library(exactextractr)
 library(lwgeom) #spherical functions for transects
 library(RcppRoll) #rolling operations for transects
+
+conflicted::conflicts_prefer(dplyr::filter)
 ```
 
 ```{r}
@@ -195,7 +197,7 @@ for (i in seq_len(nrow(fire_interiors))) {
 
 # ---- Combine ----
 final_points <- bind_rows(final_points_list)
-all_buffers  <- bind_rows(final_buffers_list) %>% mutate(unique_id = row_number())
+all_buffers  <- bind_rows(final_buffers_list) %>% mutate(Plot_ID = paste0(substr(Incid_Name, 1, 4), "_", row_number(), "_", buffer_radius))
 ```
 
 ## Summary statistics
@@ -217,6 +219,10 @@ final_points %>%
 ## Save object
 
 ```{r}
+all_buffers <- all_buffers %>%
+  rename(Radius = buffer_radius) %>%
+  select(Event_ID, Incid_Name, Fire_Year, Radius, Plot_ID)
+
 st_write(
   obj = all_buffers,
   dsn = "data/processed/fuels_analysis.gpkg",
@@ -553,7 +559,10 @@ Add points back to transects now that they are thinned.
 transects_final <- transect_pts %>%
   semi_join(balanced_transects %>% st_drop_geometry(), 
             by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-  dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_ID, type)
+  mutate(Transect_ID = paste0(substr(Incid_Name, 1, 4), "_", Transect_ID)) %>%
+  rename(Type = type,
+         Point_Num = Point_ID) %>%
+  dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_Num, Type)
 ```
 
 ## Save object in GPKG
