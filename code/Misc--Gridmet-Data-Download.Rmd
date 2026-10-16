@@ -5,6 +5,8 @@ date: "`r Sys.Date()`"
 output: word_document
 ---
 
+This code downloads weather variables from GridMet and TCC from Landfire (not used in analysis). All other data was downloaded manually.
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```

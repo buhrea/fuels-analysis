@@ -1,5 +1,5 @@
 ---
-title: "4--Joining-Covariates"
+title: "Joining Covariates"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output: pdf_document
@@ -24,6 +24,8 @@ Response Variable - CBI+
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# Set-Up
+
 ```{r}
 library(tidyverse)
 library(sf)
@@ -34,7 +36,6 @@ library(appeears) #Nasa Earthdata download
 conflicted::conflicts_prefer(terra::extract)
 ```
 
-# Setup
 ```{r}
 target_crs <- "EPSG:26913"
 
@@ -42,7 +43,7 @@ CO <- st_read("D:/Spatial_Data/States/cb_2018_us_state_20m.shp") %>%
   filter(STUSPS == "CO")
 
 allplots <- st_read("data/processed/fuels_analysis.gpkg",
-  layer = "all_buffers_selected")
+  layer = "all_plots_selected")
 
 transects <- st_read("data/processed/fuels_analysis.gpkg",
   layer = "transects_selected")

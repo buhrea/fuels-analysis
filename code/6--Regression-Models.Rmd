@@ -29,7 +29,6 @@ library(performance)
 
 transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
 
-transects <- filter(transects,!Incid_Name %in% c("TRAIL SPRINGS", "JUNKINS"))
 transects$TCC <- as.numeric(transects$TCC)
 transects$TRT_TYPE[is.na(transects$TRT_TYPE)] <- "Untreated"
 transects$TRT_TYPE <- factor(transects$TRT_TYPE, levels = c("Untreated", "Rearrangement", "Removal", "Broadcast Burn", "Wildfire"))

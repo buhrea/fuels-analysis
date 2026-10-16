@@ -1,5 +1,5 @@
 ---
-title: "3a--Site-Selection"
+title: "Site Selection"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output: word_document
@@ -29,10 +29,9 @@ knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
 library(sf)
 library(terra)
+library(exactextractr)
 library(lwgeom) #spherical functions for transects
 library(RcppRoll) #rolling operations for transects
-library(slider) #2nd try sliding operations for transects
-library(exactextractr) #get tcc for plots and transects
 ```
 
 ```{r}
@@ -40,11 +39,11 @@ target_crs <- "EPSG:26913"
 set.seed(42)
 ```
 
-Read in MTBS Fire Perimeters (Already filtered)
+Read in Selected Fires
 ```{r}
 fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires") %>%
   mutate(
-    Area_SqM = as.numeric(st_area(.))   # Get area in square meters
+    Area_SqM = as.numeric(st_area(.))   # Get area in square meters for radial lines
   ) %>%
   st_transform(target_crs)
 ```
@@ -65,18 +64,22 @@ treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments"
 flat <- st_union(treatments)
 ```
 
-# Multi-Scale Plot Selection
+# Plot Selection
 
-Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer) and within 300 m of treatment boundaries to oversample intermediate treatment proportions. Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin, subject to a 1000 m minimum spacing.
+Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer). Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin, subject to a 1000 m minimum spacing.
 
 ```{r}
+# Shrink the fires by 550m to satisfy the edge requirement
+# st_buffer with a negative value creates an inner buffer
+fire_interiors <- st_buffer(fires, dist = -550)
+
 # ---- Parameters ----
 radii        <- c(100, 250, 500)
 strat_radius <- 250                      # scale used to define gradient bins
 bin_breaks   <- c(-Inf, 0, 0.10, 0.25, 0.50, 0.75, 0.99, Inf)
 bin_labels   <- c("0", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
-quota        <- setNames(rep(10, length(bin_labels)), bin_labels)  # max plots per bin, per fire
-quota["0"]   <- 20
+quota        <- setNames(rep(50, length(bin_labels)), bin_labels)  # max plots per bin, per fire
+quota["0"]   <- 50
 n_bg         <- 500                      # candidates across the whole fire interior
 n_edge       <- 1500                     # candidates near treatment boundaries
 edge_width   <- 300                      # m on either side of a treatment boundary
@@ -195,7 +198,7 @@ final_points <- bind_rows(final_points_list)
 all_buffers  <- bind_rows(final_buffers_list) %>% mutate(unique_id = row_number())
 ```
 
-## Summary Statistics
+## Summary statistics
 
 ```{r}
 all_buffers %>%
@@ -217,7 +220,7 @@ final_points %>%
 st_write(
   obj = all_buffers,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "all_buffers_selected",
+  layer = "all_plots_selected",
   driver = "GPKG",
   delete_layer= TRUE
 )
@@ -255,117 +258,106 @@ st_write(
 )
 ```
 
-# Fine-Scale Progression Transect Selection
+# Transect Selection
 
 This section selects transects entering and exiting treatment boundaries as well as control transects.
 
-## Step 1: Prepare data by finding fire origins and creating a csv with 360 rows and an empty column for each fire. In ArcGIS, create radial lines from the fire origin. Generate points every 50m along each radial line. Create columns with a line ID and distance along line.
+## Pre-Processing 
 
-### Fire Origin and prep
-
-Before generating lines in ArcGIS, we will prepare our data by filtering our fire occurrence data from InFORM to only include our fires of interest.
+Prepare data by finding fire origins and creating a csv with 360 rows and an empty column for each fire. In ArcGIS, create radial lines from the fire origin. Generate points every 50m along each radial line. Create columns with a line ID and distance along line.
 
 InForm (NIFC) was downloaded here: https://data-nifc.opendata.arcgis.com/datasets/nifc::inform-fire-occurrence-data-records/about 
 
 Two fires (Junkins and Lake Christine) have ignition points outside of the fire perimeters. The Junkins point of origin was thus gathered from this report: https://wildfiretoday.com/tag/junkins-fire/. The Lake Christine point of origin was approximated as the southern most point (while the southern most point may be slightly west of the actual origin, due to a change in wind direction it should be more accurate for approximating fire spread).
 
-```{r occurrence-prep}
-# occurrence <- st_read("D:/Spatial_Data/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
-#   st_transform(target_crs) %>%
-#   mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
-#   filter(year(FireDiscoveryDateTime) >= 2010,
-#          year(FireDiscoveryDateTime) <= 2024) %>%
-#   mutate(occurrence_year = year(FireDiscoveryDateTime)) %>%
-#   mutate(IncidentName = toupper(IncidentName))%>%
-#   dplyr::select(occurrence_year, IncidentName)
-# 
-# ##Adjust points which are outside of perimeter########################
-# #Add in Junkins point of origin by selecting western most point
-# junkcoords <- fires %>%
-#   filter(Incid_Name == "JUNKINS") %>%
-#   st_coordinates()
-# junkx <- min(junkcoords[ ,1]) #Minimum X coordinate = western most, which we can see is the origin from the report
-# junkorig <- junkcoords[junkcoords[, 1] == junkx, ]
-# junkorig <- st_sfc(
-#   st_point(c(junkorig[1], junkorig[2])),
-#   crs = st_crs(fires)
-# )
-# junkorigfin <- st_sf(
-#   occurrence_year = 2016,
-#   IncidentName   = "JUNKINS",
-#   SHAPE           = junkorig
-# )
-# #Add Lake Christine by selecting southern most point
-# lchristcoords <- fires %>%
-#   filter(Incid_Name == "LAKE CHRISTINE") %>%
-#   st_coordinates()
-# lchristy <- min(lchristcoords[ ,2]) #Minimum Y coordinate = southernmost
-# lchristorig <- lchristcoords[lchristcoords[, 2] == lchristy, ]
-# lchristorig <- st_sfc( #make spatial object from list
-#   st_point(c(lchristorig[1], lchristorig[2])),
-#   crs = st_crs(fires)
-# )
-# lchristorigfin <- st_sf(
-#   occurrence_year = 2018,
-#   IncidentName   = "LAKE CHRISTINE",
-#   SHAPE           = lchristorig
-# )
-# #Add our new origin points back to our occurrence dataset
-# occurrence <- rbind(occurrence, junkorigfin, lchristorigfin)
-# ####################################################################
-# 
-# 
-# occurrence_in_fires <- st_join(
-#   occurrence,
-#   fires,
-#   join = st_intersects,
-#   left = FALSE
-# ) %>%
-#   filter(occurrence_year == year,
-#          IncidentName == Incid_Name) %>%
-#   dplyr::select(c("Event_ID", "Incid_Name", "Ig_Date", "year", "Area_SqM"))
-# 
-# st_write(
-#   obj = occurrence_in_fires,
-#   dsn = "data/processed/fuels_analysis.gpkg",
-#   layer = "ignition points",
-#   driver = "GPKG",
-#   delete_layer= TRUE
-# )
-# 
-# #We need a csv as well for the ArcGIS methods
-# # Extract the Projected Coordinates (X and Y)
-# # This creates new columns for X and Y based on your SHAPE field
-# coords <- st_coordinates(occurrence_in_fires)
-# occurrence_in_fires$X_Coord <- coords[,1]
-# occurrence_in_fires$Y_Coord <- coords[,2]
-# 
-# # Drop the spatial geometry temporarily to work with it as a table
-# occurrence_in_fires_df <- st_drop_geometry(occurrence_in_fires)
-# 
-# # Calculate a distance for each fire so that the radial lines cover the fire
-# occurrence_in_fires_df <- occurrence_in_fires_df %>%
-#   mutate(LineDist = sqrt(Area_SqM) * 3)
-# 
-# # Create a data frame of angles
-# angles <- data.frame(Bearing = 1:360)
-# 
-# # The "Cross Join": This multiplies your fires by the 360 angles
-# # Every fire will now have 360 rows, one for each degree.
-# radial_table <- occurrence_in_fires_df %>%
-#   crossing(angles)
-# 
-# # Save as a CSV to bring back into ArcGIS Pro
-# write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FALSE)
+```{r occurrence}
+occurrence <- st_read("D:/Spatial_Data/InFORM_FireOccurrence_Public_1766480872051252493.gpkg") %>%
+  st_transform(target_crs) %>%
+  mutate(FireDiscoveryDateTime = as.POSIXct(FireDiscoveryDateTime, tz = "UTC")) %>%
+  filter(year(FireDiscoveryDateTime) >= 2010,
+         year(FireDiscoveryDateTime) <= 2024) %>%
+  mutate(occurrence_year = year(FireDiscoveryDateTime)) %>%
+  mutate(IncidentName = toupper(IncidentName))%>%
+  dplyr::select(occurrence_year, IncidentName)
+
+##Adjust points which are outside of perimeter##
+#Add in Junkins point of origin by selecting western most point
+junkcoords <- fires %>%
+  filter(Incid_Name == "JUNKINS") %>%
+  st_coordinates()
+junkx <- min(junkcoords[ ,1]) #Minimum X coordinate = western most, which we can see is the origin from the report
+junkorig <- junkcoords[junkcoords[, 1] == junkx, ]
+junkorig <- st_sfc(
+  st_point(c(junkorig[1], junkorig[2])),
+  crs = st_crs(fires)
+)
+junkorigfin <- st_sf(
+  occurrence_year = 2016,
+  IncidentName   = "JUNKINS",
+  SHAPE           = junkorig
+)
+#Add Lake Christine by selecting southern most point
+lchristcoords <- fires %>%
+  filter(Incid_Name == "LAKE CHRISTINE") %>%
+  st_coordinates()
+lchristy <- min(lchristcoords[ ,2]) #Minimum Y coordinate = southernmost
+lchristorig <- lchristcoords[lchristcoords[, 2] == lchristy, ]
+lchristorig <- st_sfc( #make spatial object from list
+  st_point(c(lchristorig[1], lchristorig[2])),
+  crs = st_crs(fires)
+)
+lchristorigfin <- st_sf(
+  occurrence_year = 2018,
+  IncidentName   = "LAKE CHRISTINE",
+  SHAPE           = lchristorig
+)
+####
+#Add our new origin points to our occurrence dataset
+occurrence <- rbind(occurrence, junkorigfin, lchristorigfin)
+
+occurrence_in_fires <- st_join(
+  occurrence,
+  fires,
+  join = st_intersects,
+  left = FALSE
+) %>%
+  filter(occurrence_year == Fire_Year,
+         IncidentName == Incid_Name) %>%
+  dplyr::select(c("Event_ID", "Incid_Name", "Ig_Date", "Fire_Year", "Area_SqM"))
+
+# Prep and Convert to CSV for ArcGIS Methods
+# Extract the Projected Coordinates (X and Y)
+# This creates new columns for X and Y based on your SHAPE field
+coords <- st_coordinates(occurrence_in_fires)
+occurrence_in_fires$X_Coord <- coords[,1]
+occurrence_in_fires$Y_Coord <- coords[,2]
+
+# Drop the spatial geometry to work with it as a table
+occurrence_in_fires_df <- st_drop_geometry(occurrence_in_fires)
+
+# Calculate a distance for each fire so that the radial lines cover the fire
+occurrence_in_fires_df <- occurrence_in_fires_df %>%
+  mutate(LineDist = sqrt(Area_SqM) * 3)
+
+# Create a data frame of angles
+angles <- data.frame(Bearing = 1:360)
+
+# The "Cross Join": This multiplies your fires by the 360 angles
+# Every fire will now have 360 rows, one for each degree.
+radial_table <- occurrence_in_fires_df %>%
+  crossing(angles)
+
+# Save as a CSV to bring back into ArcGIS Pro
+write.csv(radial_table, "data/processed/Radial_Lines_Input.csv", row.names = FALSE)
 ```
 
-In ArcGIS I created radial lines from the ignition points to the fire perimeter using the "Bearing Distance to Line" tools. This generated 360 geodetic lines to the fire perimeter. The input for generating the lines was a csv made above. Preserve the attributes so that the Event_ID is retained.I then generated points along the lines, and did a spatial join with the fires layer using an attribute filter with Event_ID. This gives me points within the fire perimeter spaced every 50m (planar) from the ignition point. Export the results of the spatial join as AllPoints. You will have to take out the TargetFID and Date fields for export.
+In ArcGIS I created radial lines from the ignition points to the fire perimeter and added points along the lines. Instructions are in the document folder titled "Generating Radial Lines". *The output file from the ArcGIS process is necessary to continue.*
 
+## Identify Candidate Transects
 
+We need to find which transects (set of 10 sequential points) intersect treatments with 5 points in/out, and which transects are controls.
 
-## Step 2: Identify which transects (set of 10 sequential points) intersect treatments with 5 points in/out, and which transects are controls
-
-### Identify origins
+First, filter points so that each point has a minimum of 10% forest cover prior to any of our fires using 1999 NLCD TCC. 
 
 ```{r}
 #load points
@@ -374,26 +366,30 @@ points <- st_read("data/processed/AllPoints/AllPoints.shp") %>%
 
 tcc <- as.numeric(tcc)
 
-#Remove points with <10% 1999 TCC
 points$tcc <- terra::extract(tcc, vect(points))[, 2]
 
-# Filter
+# Remove points with <10% 1999 TCC and transform back to NAD83
 points <- points %>%
-  filter(tcc >= 10)
-
-points <- st_transform(points, target_crs)
-
-treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
-  st_make_valid() %>%
+  filter(tcc >= 10) %>%
   st_transform(target_crs)
+```
+
+Label each point as treated or untreated. 
+
+```{r}
 flat <- st_union(treatments)
 
 #label treated points
 spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
 points$is_treated <- rowSums(spiltmilk1) > 0
+```
 
+Identify entering, exiting, and control transect origins.
+
+```{r}
 #identify the treatment progression transects
 valid_origins <- points %>%
+  st_drop_geometry() %>%
   group_by(Incid_Name, Bearing) %>% 
   arrange(ORIG_LEN, .by_group = TRUE) %>% #arrange sequentially, by length from origin within each fire along each line
   mutate(
@@ -402,7 +398,7 @@ valid_origins <- points %>%
     # Get the sum of the 5 points AFTER those (points 6-10)
     sum_after_5 = lead(sum_next_5, 5),
     # Identify transects where all 10 points are not treated
-    sum_next_10 = roll_sum(as.numeric(is_treated, n = 10, align = "left", fill = NA))
+    sum_next_10 = roll_sum(as.numeric(is_treated), n = 10, align = "left", fill = NA)
   ) %>%
   filter(
     (sum_next_5 == 5 & sum_after_5 == 0) | # 5 IN then 5 OUT
@@ -417,7 +413,7 @@ valid_origins <- points %>%
   ungroup()
 ```
 
-### Add points back to identified origins to create transects
+Filter points to only those with valid origins.
 
 ```{r}
 # Order points and index within each radial
@@ -427,7 +423,6 @@ pts <- points %>%
   mutate(row = row_number()) %>%
   ungroup()
 
-valid_origins <- st_drop_geometry(valid_origins)
 # Get the origin row index for each valid origin
 origins <- pts %>%
   inner_join(valid_origins,
@@ -438,19 +433,23 @@ origins <- pts %>%
 
 # Keep origin + next 9 points (10 total)
 transect_pts <- pts %>%
-  inner_join(origins, by = c("Event_ID", "ORIG_FID")) %>%
-  filter(row >= origin_row & row <= origin_row + 9) %>% #must be in order
+  inner_join(
+    origins %>% mutate(origin_end = origin_row + 9),
+    by = join_by(Event_ID, ORIG_FID, between(row, origin_row, origin_end))
+  ) %>%                                              
   group_by(Event_ID, ORIG_FID, origin_row, type) %>%
   filter(
-    n() == 10,                                # must have 10 points
-    (max(ORIG_SEQ) - min(ORIG_SEQ)) == 9,     # span must be 9
-    n_distinct(ORIG_SEQ) == 10                # no missing sequence numbers
+    n() == 10,
+    (max(ORIG_SEQ) - min(ORIG_SEQ)) == 9,
+    n_distinct(ORIG_SEQ) == 10
   ) %>%
   mutate(Point_ID = row_number()) %>%
   ungroup()
 ```
 
-## Step 3: Make transects into line objects and enforce spacing
+## Filter for Spacing
+
+Make transects into line objects and enforce spacing rules. Prioritize selecting treatment transects (entering/exiting) before controls during spacing.
 
 ```{r}
 transect_pts <- transect_pts %>%
@@ -458,8 +457,8 @@ transect_pts <- transect_pts %>%
   mutate(Transect_ID = cur_group_id()) %>%
   ungroup()
 
-transect_lines <- transect_pts %>%
-  arrange(Event_ID, Incid_Name, ORIG_FID, Transect_ID, ORIG_SEQ) %>%  
+transect_lines <- transect_pts %>% #this takes awhile
+  arrange(Event_ID, Incid_Name, ORIG_FID, Transect_ID, ORIG_SEQ) %>%
   group_by(Transect_ID, Event_ID, Incid_Name, ORIG_FID) %>%
   summarize(geometry = st_cast(st_combine(geometry), "LINESTRING"),
             type = first(type),
@@ -467,10 +466,9 @@ transect_lines <- transect_pts %>%
 
 #Treatment transects should be prioritized in selection, which can be done by ordering them first. Use type column to create treated column then arrange.
 
-transect_lines <- transect_lines %>%
+transect_lines <- transect_lines %>% 
   mutate(treatment = ifelse(type == "control", FALSE, TRUE)) %>%
   arrange(desc(treatment))
-
 
 #Remove transect lines within 50m of fire perimeter to avoid effects of fire suppression
 fire_interiors2 <- st_buffer(fires, dist = -50)
@@ -499,7 +497,8 @@ while (length(remaining_indices) > 0) {
 thinned_transects <- transect_lines[keep_indices, ]
 ```
 
-### Filter control transects to equal the number of treatment transects
+Filter control transects to equal the number of treatment transects.
+
 ```{r}
 #First buffer treatments by 500m and remove the control transects that are too close
 treatments_buffered <- st_buffer(flat, dist = 500)
@@ -511,7 +510,7 @@ treated_yes <- thinned_transects %>%
   #Filter the FALSE rows (only keep if NOT within treatments_buffered)
 treated_no_filtered <- thinned_transects %>% 
   filter(treatment == FALSE) %>%
-  # st_filter keeps what intersects; we use [!apply(...)] or st_disjoint
+  # st_filter keeps what intersects; we use st_disjoint to avoid this
   st_filter(treatments_buffered, .predicate = st_disjoint)
 
   #Combine them back into one object
@@ -548,17 +547,13 @@ SumStatsTransects <- balanced_transects %>%
 SumStatsTransects
 ```
 
-### Add points back to transects now that they are thinned
+Add points back to transects now that they are thinned.
 
 ```{r}
 transects_final <- transect_pts %>%
   semi_join(balanced_transects %>% st_drop_geometry(), 
             by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-  dplyr::select(Event_ID, Incid_Name, year, Transect_ID, Point_ID, type)
-
-st_write(transects_final, 
-         "data/processed/Transects/FinalTransectsALL.shp",
-         delete_dsn = TRUE)
+  dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_ID, type)
 ```
 
 ## Save object in GPKG

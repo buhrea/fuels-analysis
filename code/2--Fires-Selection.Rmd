@@ -170,7 +170,7 @@ myfires %>%
   summarise(Proportion_Treated) %>%
   arrange(desc(Proportion_Treated))
 
-write.csv(myfires, "data/processed/my_fires.csv")
+write.csv(myfires, "data/processed/my_fires.csv", row.names = FALSE)
 ```
 
 # Update Geopackage to Reflect Fires Selection
