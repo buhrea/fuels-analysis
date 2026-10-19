@@ -258,108 +258,95 @@ allplots <- allplots %>%
   )
 ```
 
-
 # Climate
 
 For each climate variable, we calculate the 30-year mean and the fire-year mean using PRISM data prior to the fire year (800-m resolution). We then derive z-scores for each variable and compute the difference between the 30-year average and the fire-year average. The climate anomaly variables include annual total precipitation, mean temperature, minimum vapor pressure deficit (min VPD), and maximum vapor pressure deficit (max VPD).
 
-## Daymet
-
 ```{r}
-base_path <- "D:/Spatial_Data/Daymet/Daymet"
-```
+fires <- st_read("fires.gpkg")          # needs fire_id, fire_year
+fires_v <- vect(st_transform(fires, "EPSG:4269"))  # PRISM is NAD83 geographic
 
-## Transects Join - Daymet
+files <- list.files("prism_800m", pattern = "\\.(bil|tif)$",
+                    recursive = TRUE, full.names = TRUE)
 
-```{r}
-final_data <- NULL
-
-for(yr in unique(transects$Fire_Year)){
-
-  transects_yr <- transects[transects$Fire_Year == yr, ]
-
-  for(v in c("PRCP", "TMAX", "TMIN", "VP")){
-    prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
-    file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
-    r <- rast(file_path)
-
-    pts <- vect(transects_yr)
-    day_layer <- transects_yr$dob
-
-    # Only rows with valid dob
-    valid <- !is.na(day_layer) & day_layer >= 1 & day_layer <= nlyr(r)
-
-    vals <- rep(NA_real_, nrow(transects_yr))
-    vals[valid] <- terra::extract(r, pts[valid, ], layer = day_layer[valid])[, "value"]
-
-    transects_yr[[v]] <- vals
-  }
-
-  final_data <- bind_rows(final_data, st_as_sf(transects_yr))
+extract_one <- function(f) {
+  r <- rast(f)
+  # parse variable, year, month from your file naming (adjust regex)
+  meta <- str_match(basename(f), "PRISM_(\\w+)_.*_(\\d{4})(\\d{2})")
+  vals <- terra::extract(r, fires_v, fun = mean, na.rm = TRUE)
+  tibble(fire_id = fires$fire_id, var = meta[2],
+         year = as.integer(meta[3]), month = as.integer(meta[4]),
+         value = vals[[2]])
 }
 
-transects <- final_data
+clim <- map_dfr(files, extract_one)     # run once, then saveRDS()
 
-transects <- transects %>%
-  mutate(
-    TMAX = (TMAX * (9/5)) + 32,      # C to F
-    TMIN = (TMIN * (9/5)) + 32
-  )
-
-#Reproject transects back to target crs
-transects <- st_transform(transects, target_crs)
+anoms <- clim |>
+  left_join(st_drop_geometry(fires) |> select(fire_id, fire_year), by = "fire_id") |>
+  group_by(fire_id, var, month) |>
+  summarise(
+    base_mean = mean(value[year >= fire_year - 30 & year <= fire_year - 1]),
+    base_sd   = sd(value[year >= fire_year - 30 & year <= fire_year - 1]),
+    prior_val = value[year == fire_year - 1],
+    .groups = "drop"
+  ) |>
+  mutate(z = (prior_val - base_mean) / base_sd,
+         diff_raw = prior_val - base_mean)
 ```
 
-## Plots Join - Daymet
-
 ```{r}
-final_data <- NULL
+prism_base <- "D:/Spatial_Data/PRISM"
+vars <- c("PPT", "TMEAN", "VPDMIN", "VPDMAX")
 
-for(yr in unique(allplots$Fire_Year)){
-  
-  allplots_yr <- allplots[allplots$Fire_Year == yr, ]
-  
-  for(v in c("PRCP", "TMAX", "TMIN", "VP")){
-    prefix <- switch(v, "PRCP"="prcp", "TMAX"="tmax", "TMIN"="tmin", "VP"="vp")
-    file_path <- file.path(base_path, v, paste0("daymet_v4_daily_na_", prefix, "_", yr, ".nc"))
-    r <- rast(file_path)
-    
-    day_layer <- allplots_yr$dob
-    valid <- !is.na(day_layer) & day_layer >= 1 & day_layer <= nlyr(r)
-    
-    vals <- rep(NA_real_, nrow(allplots_yr))
-    
-    # Group by day-of-year so we only extract each layer once
-    valid_days <- unique(day_layer[valid])
-    
-    for(d in valid_days){
-      rows <- which(valid & day_layer == d)
-      
-      # Single layer for this day
-      r_day <- r[[d]]
-      
-      # exact_extract wants an sf object for polygons
-      polys <- st_as_sf(allplots_yr[rows, ])
-      
-      vals[rows] <- exact_extract(r_day, polys, fun = "mean")
+prism_file <- function(v, yr) {
+  nm <- paste0("prism_", tolower(v), "_us_30s_", yr)
+  file.path(prism_base, v, nm, paste0(nm, ".bil"))
+}
+
+# Baseline = (yr-30):(yr-1); comparison = yr. Returns norm, yr value, diff, z
+anomaly_stack <- function(v, yr, e) {
+  base_files <- vapply((yr - 30):(yr - 1), \(y) prism_file(v, y), character(1))
+  stopifnot(all(file.exists(c(base_files, prism_file(v, yr)))))
+
+  base_r <- crop(rast(base_files), e)
+  yr_r   <- crop(rast(prism_file(v, yr)), e)
+
+  norm <- mean(base_r, na.rm = TRUE)
+  sdev <- stdev(base_r, pop = FALSE, na.rm = TRUE)  # sample SD (n-1); terra defaults to pop = TRUE
+
+  out <- c(norm, yr_r, yr_r - norm, (yr_r - norm) / sdev)
+  names(out) <- paste0(v, c("_norm", "_yr", "_diff", "_z"))
+  out
+}
+
+join_prism <- function(x, type = c("points", "polygons"), target_crs) {
+  type <- match.arg(type)
+  out <- NULL
+
+  for (yr in sort(unique(x$Fire_Year))) {
+    x_yr  <- x[x$Fire_Year == yr, ]
+    x_prj <- st_transform(x_yr, 4269)            # PRISM is NAD83 geographic
+
+    e <- ext(vect(x_prj))
+    e <- ext(e[1] - 0.1, e[2] + 0.1, e[3] - 0.1, e[4] + 0.1)  # small buffer, degrees
+
+    a <- do.call(c, lapply(vars, anomaly_stack, yr = yr, e = e))
+
+    vals <- if (type == "points") {
+      terra::extract(a, vect(x_prj), ID = FALSE)
+    } else {
+      exact_extract(a, x_prj, fun = "mean", progress = FALSE)
     }
-    
-    allplots_yr[[v]] <- vals
+    names(vals) <- names(a)
+
+    out <- bind_rows(out, bind_cols(x_yr, vals))
   }
-  
-  final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
+
+  st_transform(out, target_crs)
 }
 
-allplots <- final_data
-
-allplots <- allplots %>%
-  mutate(
-    TMAX = (TMAX * (9/5)) + 32,      # C to F
-    TMIN = (TMIN * (9/5)) + 32
-  )
-
-#Reproject transects back to target crs
-allplots <- st_transform(allplots, target_crs)
+transects <- join_prism(transects, "points",   target_crs)
+allplots  <- join_prism(allplots,  "polygons", target_crs)
 ```
 
 # Treatment Characteristics
