@@ -74,7 +74,7 @@ slope <- rast("D:/Spatial_Data/LANDFIRE/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.
 
 elevation <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif") %>%
   crop(state) %>%
-  mask(state) 
+  mask(state)  
 
 hli <- hli(elevation) %>%
   project(target_crs)
@@ -97,7 +97,7 @@ transects <- transects %>%
   rename("Northness" = "LF2020_Asp_CONUS",
          "Slope" = "LF2020_SlpD_CONUS",
          "Elevation" = "LF2020_Elev_CONUS",
-         "HLI" = )
+         "HLI" = "lyr.1")
 ```
 
 Join topography data to plots.
@@ -109,12 +109,12 @@ slope_plots <- extract(slope, allplots, fun = mean)
 hli_plots <- extract(hli, allplots, fun = mean)
 
 allplots <- allplots %>%
-  cbind(north_plots, elev_plots, slope_plots) %>%
+  cbind(north_plots, elev_plots, slope_plots, hli_plots) %>%
   select(-starts_with("ID")) %>%
   rename("Northness" = "LF2020_Asp_CONUS",
          "Slope" = "LF2020_SlpD_CONUS",
          "Elevation" = "LF2020_Elev_CONUS",
-         "HLI" = )
+         "HLI" = "lyr.1")
 ```
 
 # Fire Weather
@@ -201,7 +201,7 @@ allplots_dob <- allplots_proj %>%
   select(-row_id)
 
 # Calculate calendar date from Julian day
-allplots <- allplots_processed %>%
+allplots <- allplots_dob %>%
   mutate(date = as.Date(paste(Fire_Year, dob, sep = "-"), format = "%Y-%j"))
 ```
 
@@ -258,274 +258,10 @@ allplots <- allplots %>%
   )
 ```
 
+
 # Climate
 
-Weather variables were obtained from Daymet. Updated from Gridmet for better resolution to address overfitting in random forest models.
-
-## Gridmet
-
-```{r}
-base_path <- "D:/Spatial_Data/GridMet"
-```
-
-## Transects Join - Gridmet
-
-```{r}
-final_data <- NULL
-
-# Loop by Fire_Year
-for(yr in unique(transects$Fire_Year)){
-
-  # Subset points for this Fire_Year
-  transects_yr <- transects[transects$Fire_Year == yr, ]
-
-  # Loop through variables
-  for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
-
-    # Map folder name to the prefix
-    prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
-    file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
-
-    # Load the raster cube
-    r <- rast(file_path)
-
-    # Extract all layers for the points in this year
-    ext <- terra::extract(r, vect(transects_yr))
-
-    # Take the specific day value
-    values_vector <- sapply(1:nrow(transects_yr), function(i) {
-      day_val <- transects_yr$dob[i]
-
-      # Handle cases where dob is NA
-      if(is.na(day_val)) return(NA_real_)
-
-      # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
-      day_col <- day_val + 1
-
-      # Safety check for bounds and missing extraction rows
-      if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
-
-      return(ext[i, day_col])
-    })
-
-    # Add this variable to year-subset
-    transects_yr[[v]] <- values_vector
-  }
-
-  # Bind results
-  final_data <- bind_rows(final_data, st_as_sf(transects_yr))
-}
-
-transects <- final_data
-
-transects <- transects %>%
-  mutate(
-    TMax = TMax - 273.15,      # K to C
-  )
-
-#Reproject transects back to target crs
-transects <- st_transform(transects, target_crs)
-
-transects <- transects %>%
-  rename(Tmax_4k = TMax,
-         PR_4k = PR,
-         VS_4k = VS,
-         VPD_4k = VPD,
-         ERC_4k = ERC)
-```
-
-## Plots Join - Gridmet
-
-```{r}
-final_data <- NULL
-
-# Loop by Year
-for(yr in unique(allplots$Fire_Year)){
-
-  # Subset points for this year
-  allplots_yr <- allplots[allplots$Fire_Year == yr, ]
-
-  # Loop through your variables
-  for(v in c("TMax", "PR", "VS", "VPD", "ERC")){
-
-    # Map folder name to the prefix
-    prefix <- switch(v, "TMax"="tmmx", "PR"="pr", "VS"="vs", "VPD"="vpd", "ERC"="erc")
-    file_path <- file.path(base_path, v, paste0(prefix, "_", yr, ".nc"))
-
-    # Load the raster cube
-    r <- rast(file_path)
-
-    # Extract all layers for the points in this year
-    ext <- terra::extract(r, vect(allplots_yr), fun = mean)
-
-    # Take the specific day value
-    values_vector <- sapply(1:nrow(allplots_yr), function(i) {
-      day_val <- allplots_yr$dob[i]
-
-      # Handle cases where dob is NA
-      if(is.na(day_val)) return(NA_real_)
-
-      # Determine the column (Day 1 is col 2, Day 2 is col 3, etc.)
-      day_col <- day_val + 1
-
-      # Safety check for bounds and missing extraction rows
-      if(day_col > ncol(ext) || day_col < 2) return(NA_real_)
-
-      return(ext[i, day_col])
-    })
-
-    # Add this variable to our year-subset
-    allplots_yr[[v]] <- values_vector
-  }
-
-  # 5. Bind results
-  final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
-}
-
-allplots <- final_data
-
-allplots <- allplots %>%
-  mutate(
-    TMax = TMax - 273.15,      # K to C
-  )
-
-#Reproject transects back to target crs
-allplots <- st_transform(allplots, target_crs)
-
-allplots <- allplots %>%
-  rename(Tmax_4k = TMax,
-         PR_4k = PR,
-         VS_4k = VS,
-         VPD_4k = VPD,
-         ERC_4k = ERC)
-```
-
-## TerraClimate
-
-```{r}
-base_path <- "D:/Spatial_Data/TerraClimate"
-```
-
-## Transects Join - TerraClimate
-
-```{r}
-final_data <- NULL
-
-# Loop by Year
-for(yr in unique(transects$Fire_Year)){
-
-  # Subset points for this year
-  transects_yr <- transects[transects$Fire_Year == yr, ]
-
-  # Loop through variables
-  for(v in c("CWD", "PDSI")){
-
-    # Map folder name to the prefix
-    prefix <- switch(v, "CWD"="def", "PDSI"="PDSI")
-    file_path <- file.path(base_path, v, paste0("TerraClimate_", prefix, "_", yr, ".nc"))
-
-    # Load the raster cube
-    r <- rast(file_path)
-
-    # Extract all layers for the points in this year
-    ext <- terra::extract(r, vect(transects_yr))
-
-    # Take the value for each point's burn month
-    values_vector <- sapply(1:nrow(transects_yr), function(i) {
-      day_val <- transects_yr$dob[i]
-
-      # Handle cases where dob is NA
-      if(is.na(day_val)) return(NA_real_)
-
-      # Convert day of year to month (1-12)
-      month_val <- as.integer(format(as.Date(day_val - 1, origin = paste0(yr, "-01-01")), "%m"))
-
-      # Month 1 is col 2, month 2 is col 3, etc. (col 1 is the ID)
-      month_col <- month_val + 1
-
-      # Safety check for bounds and missing extraction rows
-      if(month_col > ncol(ext) || month_col < 2) return(NA_real_)
-
-      return(ext[i, month_col])
-    })
-
-    # Add this variable to year-subset
-    transects_yr[[v]] <- values_vector
-  }
-
-  # Bind results
-  final_data <- bind_rows(final_data, st_as_sf(transects_yr))
-}
-
-transects <- final_data
-
-#Reproject transects back to target crs
-transects <- st_transform(transects, target_crs)
-
-transects <- transects %>%
-  rename(CWD_4k = CWD,
-         PDSI_4k = PDSI)
-```
-
-## Plots Join - TerraClimate
-
-```{r}
-final_data <- NULL
-
-# Loop by Year
-for(yr in unique(allplots$Fire_Year)){
-
-  # Subset points for this Fire_Year
-  allplots_yr <- allplots[allplots$Fire_Year == yr, ]
-
-  for(v in c("CWD", "PDSI")){
-
-    # Map folder name to the prefix
-    prefix <- switch(v, "CWD"="def", "PDSI"="PDSI")
-    file_path <- file.path(base_path, v, paste0("TerraClimate_", prefix, "_", yr, ".nc"))
-
-    # Load the raster cube
-    r <- rast(file_path)
-
-    # Extract all layers for the points in this year
-    ext <- terra::extract(r, vect(allplots_yr), fun = mean)
-
-    # Take the value for each point's burn month
-    values_vector <- sapply(1:nrow(allplots_yr), function(i) {
-      day_val <- allplots_yr$dob[i]
-
-      # Handle cases where dob is NA
-      if(is.na(day_val)) return(NA_real_)
-
-      # Convert day of year to month (1-12)
-      month_val <- as.integer(format(as.Date(day_val - 1, origin = paste0(yr, "-01-01")), "%m"))
-
-      # Month 1 is col 2, month 2 is col 3, etc. (col 1 is the ID)
-      month_col <- month_val + 1
-
-      # Safety check for bounds and missing extraction rows
-      if(month_col > ncol(ext) || month_col < 2) return(NA_real_)
-
-      return(ext[i, month_col])
-    })
-
-    # Add this variable to our year-subset
-    allplots_yr[[v]] <- values_vector
-  }
-
-  # 5. Bind results
-  final_data <- bind_rows(final_data, st_as_sf(allplots_yr))
-}
-
-allplots <- final_data
-
-#Reproject transects back to target crs
-allplots <- st_transform(allplots, target_crs)
-
-allplots <- allplots %>%
-  rename(CWD_4k = CWD,
-         PDSI_4k = PDSI)
-```
+For each climate variable, we calculate the 30-year mean and the fire-year mean using PRISM data prior to the fire year (800-m resolution). We then derive z-scores for each variable and compute the difference between the 30-year average and the fire-year average. The climate anomaly variables include annual total precipitation, mean temperature, minimum vapor pressure deficit (min VPD), and maximum vapor pressure deficit (max VPD).
 
 ## Daymet
 
