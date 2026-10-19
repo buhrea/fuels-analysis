@@ -1,11 +1,11 @@
 ---
-title: "0a--Data-Download"
+title: "Data Download"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output: word_document
 ---
 
-This code downloads weather variables from GridMet and TCC from Landfire (not used in analysis). All other data was downloaded manually.
+This code downloads weather variables from ClimateNA, Daymet, GridMet and TCC from Landfire (the latter two not used in analysis). All other data was downloaded manually.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -19,6 +19,30 @@ library(here)
 library(keyring)
 library(appeears) #Download daymet from Nasa Earthdata
 library(sf) #Use to request daymet data for a polygon
+library(ClimateNAr) #Download ClimateNA Data
+```
+
+# ClimateNA
+
+```{r climateNA}
+# Load Colorado Shapefile to use to Crop elevation raster for input
+fires_cna <- st_read("C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/fuels_analysis.gpkg", layer = "fires") %>% 
+  st_transform("EPSG:5070")
+
+#Load DEM Raster and Crop to state
+dem <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif") %>%
+  crop(fires_cna) %>%
+  mask(fires_cna) %>%
+  project("EPSG:4326") #Project to WGS84 for use with ClimateNA
+
+#Save DEM so we can just upload it as a path
+writeRaster(dem, "D:/Spatial_Data/ClimateNA/dem_wgs84.tif", overwrite = TRUE, NAflag = -9999)
+
+# Normals
+ClimateNAr(inputFile = 'D:/Spatial_Data/ClimateNA/dem_wgs84.tif', periodList = c('Normal_1981_2010.nrm'), varList = c('MAT', 'MAP', 'CMD', 'Eref', 'Tave_sm'), outDir = 'D:/Spatial_Data/ClimateNA/')
+
+# Annual
+ClimateNAr(inputFile = 'D:/Spatial_Data/ClimateNA/dem_wgs84.tif', periodList = 2010:2024, varList = c('MAT', 'MAP', 'CMD', 'Eref'), outDir = 'D:/Spatial_Data/ClimateNA/')
 ```
 
 # Weather
