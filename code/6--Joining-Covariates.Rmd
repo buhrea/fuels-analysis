@@ -260,41 +260,11 @@ allplots <- allplots %>%
 
 # Climate
 
-For each climate variable, we calculate the 30-year mean and the fire-year mean using PRISM data prior to the fire year (800-m resolution). We then derive z-scores for each variable and compute the difference between the 30-year average and the fire-year average. The climate anomaly variables include annual total precipitation, mean temperature, minimum vapor pressure deficit (min VPD), and maximum vapor pressure deficit (max VPD).
+Climate data was obtained from PRISM at a 800-m resolution. We considered annual total precipitation, mean temperature, minimum vapor pressure deficit (min VPD), and maximum vapor pressure deficit (max VPD). 
 
-```{r}
-fires <- st_read("fires.gpkg")          # needs fire_id, fire_year
-fires_v <- vect(st_transform(fires, "EPSG:4269"))  # PRISM is NAD83 geographic
+For each climate variable, we calculated z-scores comparing the fire year to the 30-year reference period preceding the fire. Z-scores are calculated as *z = (x − μ)/σ* where X = the fire year mean, μ = the reference period mean, and σ = the reference period standard deviation. This returns the distance in standard deviations away from reference conditions.
 
-files <- list.files("prism_800m", pattern = "\\.(bil|tif)$",
-                    recursive = TRUE, full.names = TRUE)
-
-extract_one <- function(f) {
-  r <- rast(f)
-  # parse variable, year, month from your file naming (adjust regex)
-  meta <- str_match(basename(f), "PRISM_(\\w+)_.*_(\\d{4})(\\d{2})")
-  vals <- terra::extract(r, fires_v, fun = mean, na.rm = TRUE)
-  tibble(fire_id = fires$fire_id, var = meta[2],
-         year = as.integer(meta[3]), month = as.integer(meta[4]),
-         value = vals[[2]])
-}
-
-clim <- map_dfr(files, extract_one)     # run once, then saveRDS()
-
-anoms <- clim |>
-  left_join(st_drop_geometry(fires) |> select(fire_id, fire_year), by = "fire_id") |>
-  group_by(fire_id, var, month) |>
-  summarise(
-    base_mean = mean(value[year >= fire_year - 30 & year <= fire_year - 1]),
-    base_sd   = sd(value[year >= fire_year - 30 & year <= fire_year - 1]),
-    prior_val = value[year == fire_year - 1],
-    .groups = "drop"
-  ) |>
-  mutate(z = (prior_val - base_mean) / base_sd,
-         diff_raw = prior_val - base_mean)
-```
-
-```{r}
+```{r prism}
 prism_base <- "D:/Spatial_Data/PRISM"
 vars <- c("PPT", "TMEAN", "VPDMIN", "VPDMAX")
 
@@ -303,7 +273,7 @@ prism_file <- function(v, yr) {
   file.path(prism_base, v, nm, paste0(nm, ".bil"))
 }
 
-# Baseline = (yr-30):(yr-1); comparison = yr. Returns norm, yr value, diff, z
+# Baseline = (yr-30):(yr-1); comparison = yr. Returns z
 anomaly_stack <- function(v, yr, e) {
   base_files <- vapply((yr - 30):(yr - 1), \(y) prism_file(v, y), character(1))
   stopifnot(all(file.exists(c(base_files, prism_file(v, yr)))))
@@ -314,8 +284,8 @@ anomaly_stack <- function(v, yr, e) {
   norm <- mean(base_r, na.rm = TRUE)
   sdev <- stdev(base_r, pop = FALSE, na.rm = TRUE)  # sample SD (n-1); terra defaults to pop = TRUE
 
-  out <- c(norm, yr_r, yr_r - norm, (yr_r - norm) / sdev)
-  names(out) <- paste0(v, c("_norm", "_yr", "_diff", "_z"))
+  out <- c((yr_r - norm) / sdev)
+  names(out) <- paste0(v, "_z")
   out
 }
 
@@ -359,8 +329,6 @@ allplots  <- join_prism(allplots,  "polygons", target_crs)
 For Plots
 - Treatment Extent
 
-## Load data
-
 ```{r}
 #save the layer
 treats <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
@@ -374,7 +342,7 @@ treats <- treats %>%
   ))
 ```
 
-## Transects Join
+Join Transects
 
 ```{r}
 # Ensure the crs match
@@ -431,7 +399,7 @@ transects <- transects %>%
   select(-point_id) # Drop the temporary ID tracking column
 ```
 
-## Plots Join
+Join Plots
 
 ```{r}
 # Match alignment CRS
@@ -485,7 +453,6 @@ continuous_summary <- plots_joined_raw %>%
     .groups = "drop"
   )
 
-
 # Process categorical variables (Proportions of Plot Area)
 # Dissolve treatment polygons by type first, so overlapping polygons
 # of the same TRT_TYPE don't get double-counted
@@ -536,11 +503,9 @@ allplots <- allplots_final
 
 # Pre-Fire Fuels
 
-Data is obtained from Landfire. Pre-fire vegetation is represented by the Existing Vegetation Type. Pre-fire fuels are represented by Canopy Cover.
+Pre-fire vegetation is represented by the 2001 Landfire Existing Vegetation Type Physiognomic Group. Pre-fire fuels are represented by NLCD Annual Tree Canopy Cover for the year prior to treatment.
 
 ## EVT
-
-### Load data
 
 ```{r}
 evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_20250916/US_105_EVT/Tif/us_105evt.tif") %>%
@@ -552,7 +517,7 @@ evt <- rast("D:/Spatial_Data/LANDFIRE/US_105_EVT_20250916_2001/US_105_EVT_202509
 activeCat(evt) <- "SYSTMGRPPH"
 ```
 
-### Transects Join
+Join transects
 
 ```{r}
 evt_trans <- extract(evt, transects)
@@ -572,7 +537,7 @@ evt_counts <- transects %>%
 print(evt_counts)
 ```
 
-### Plots Join
+Join Plots
 
 ```{r}
 # ID -> physiognomy lookup
@@ -614,9 +579,7 @@ allplots <- allplots %>%
 
 ## Canopy Cover
 
-Add column to plots with the year we want TCC (year prior to earliest treatment, or year prior to fire for controls)
-
-### Load data
+We will need to add a temporary column to plots with the year we want TCC (year prior to earliest treatment, or year prior to fire for controls).
 
 ```{r}
 tcc_base_dir <- "D:/Spatial_Data/NLCD"
@@ -640,7 +603,7 @@ names(tcc_file_map) <- tcc_years
 print(names(tcc_file_map))
 ```
 
-### Transects Join
+Join transects
 
 ```{r}
 # 1. Calculate the target year per transect row
@@ -686,7 +649,7 @@ transects_with_tcc <- transects_proj %>%
 transects <- st_transform(transects_with_tcc, target_crs)
 ```
 
-### Plots Join
+Join plots
 
 ```{r}
 # 1. Calculate target year for plots
@@ -730,62 +693,27 @@ allplots <- st_transform(allplots_with_tcc, target_crs)
 
 # Response Variable
 
-## Load Data
+We found RdNBR following Parks GEE methods. RdNBR is used as a continuous value for transect points and a mean for plots. Categorical severity (L/M/H) is based on Parks et al. 2018 (https://doi.org/10.3390/rs10060879) for RdNBR without offset: "Threshold values for each fire severity metric corresponding to low (CBI = 0–1.24), moderate (CBI = 1.25–2.25), and high severity (CBI = 2.25–3)."
 
 ```{r}
-cbilist <- list.files(path = "data/processed/GEE/FireSeverity/CBI", pattern = "\\.tif$", full.names = TRUE)
-cbi_rast <- lapply(cbilist, terra::rast)
-
 rdnbrlist <- list.files(path = "data/processed/GEE/FireSeverity/RdNBR", pattern = "\\.tif$", full.names = TRUE)
 rdnbr_rast <- lapply(rdnbrlist, terra::rast)
-```
-
-## Transects Join
-
-```{r}
-# Reproject transects to match raster CRS
-transects_proj <- st_transform(transects, crs(cbi_rast[[1]]))
-
-# Extract fire name/ID from filenames to use as a matching key
-fire_names <- tools::file_path_sans_ext(basename(cbilist))
-names(cbi_rast) <- fire_names
-
-# Extract cbi for each transect point from its matching raster
-# This loops over each unique fire, extracts from the right raster, then recombines
-
-transects <- transects_proj %>%
-  mutate(row_id = row_number()) %>%  # preserve original order
-  split(.$Event_ID) %>%              
-  imap_dfr(function(pts, fire) {
-    
-    # Find the matching raster (partial match in case names aren't exact)
-    rast_match <- cbi_rast[[grep(fire, names(cbi_rast), value = TRUE)[1]]]
-    
-    if (is.null(rast_match)) {
-      warning(paste("No matching raster for fire:", fire))
-      return(pts %>% mutate(cbi = NA))
-    }
-    
-    # Extract values
-    extracted <- terra::extract(rast_match, vect(pts))
-    pts$cbi <- extracted[, 2]  # column 1 is ID, column 2 is the raster value
-    return(pts)
-    
-  }) %>%
-  arrange(row_id) %>%   # restore original order
-  select(-row_id)
-
-
-## Join RdNBR 
 
 # Extract fire name/ID from filenames to use as a matching key
 fire_names <- tools::file_path_sans_ext(basename(rdnbrlist))
 names(rdnbr_rast) <- fire_names
+```
 
-# Extract RdNBR for each transect point from its matching raster
+Join transects
+
+```{r}
+# Reproject transects to match raster CRS
+transects_proj <- st_transform(transects, crs(rdnbr_rast[[1]]))
+
+# Extract rdnbr for each transect point from its matching raster
 # This loops over each unique fire, extracts from the right raster, then recombines
 
-transects <- transects %>%
+transects <- transects_proj %>%
   mutate(row_id = row_number()) %>%  # preserve original order
   split(.$Event_ID) %>%              
   imap_dfr(function(pts, fire) {
@@ -809,101 +737,30 @@ transects <- transects %>%
 
 #Reproject transects back to target crs
 transects <- st_transform(transects, target_crs)
+
+#Sort start of transects into L/M/H based on average severity of first 5 points
+transects <- transects %>%
+  group_by(Transect_ID) %>% 
+mutate(
+    start_value = mean(rdnbr[Point_ID %in% 1:5], na.rm = TRUE),
+    Starting_Sev = case_when(
+      start_value <= 338              ~ "Low",
+      start_value >= 339 & start_value <= 726 ~ "Moderate",
+      start_value >= 727              ~ "High",
+    )
+  ) %>%
+  ungroup() %>%
+  select(-start_value)
 ```
 
-## Plots Join
+Join plots
 
 ```{r}
-# 1. List all CBI files and name the list using the Fire IDs from the filenames
-cbi_dir <- "data/processed/GEE/FireSeverity/CBI"
-cbi_list <- list.files(path = cbi_dir, pattern = "\\.tif$", full.names = TRUE)
-cbi_names <- tools::file_path_sans_ext(basename(cbi_list))
-names(cbi_list) <- cbi_names
+# Reproject plots to match raster CRS
+allplots_proj <- st_transform(allplots, crs(rdnbr_rast[[1]]))
 
-# 2. Match coordinate reference systems using the first available raster
-if (length(cbi_list) > 0) {
-  first_raster <- rast(cbi_list[[1]])
-  allplots_proj <- st_transform(allplots, crs(first_raster))
-} else {
-  stop("No .tif files found in the specified CBI directory.")
-}
-
-# 3. Loop through each unique fire, extract pixel values, and calculate thresholds
-allplots_with_cbi <- allplots_proj %>%
-  mutate(row_id = row_number()) %>%  # Track original row order
-  split(.$Event_ID) %>%              # Split into a list of datasets by Fire ID
-  imap_dfr(function(polys, fire) {
-    
-    # Locate the matching raster file for this fire
-    match_idx <- grep(fire, names(cbi_list))
-    
-    if (length(match_idx) == 0 || is.na(match_idx[1])) {
-      warning(paste("No matching CBI raster found for fire ID:", fire))
-      polys$mean_cbi <- NA_real_
-      polys$prop_high_sev <- NA_real_
-      polys$prop_mod_high_sev <- NA_real_
-      return(polys)
-    }
-    
-    # Load the specific pointer for this fire's raster
-    raster_match <- rast(cbi_list[[match_idx[1]]])
-    
-    # Convert polygons to SpatVector for terra
-    v_polys <- vect(polys)
-    
-    # Extract ALL underlying pixels per polygon circle. 
-    # Setting ID = TRUE allows us to keep track of which pixels belong to which plot.
-    extracted_pixels <- terra::extract(raster_match, v_polys, ID = TRUE)
-    
-    # Identify the name of the data column (it matches the raster file name)
-    cbi_col_name <- names(extracted_pixels)[2]
-    
-    # Calculate the summaries for each plot in this fire subset
-    cbi_summary <- extracted_pixels %>%
-      filter(!is.na(.data[[cbi_col_name]])) %>%
-      group_by(ID) %>%
-      summarize(
-        # 1. Continuous Mean
-        mean_cbi = mean(.data[[cbi_col_name]]),
-        
-        # 2. Proportion of High Severity (CBI > 2.25)
-        prop_high_sev = sum(.data[[cbi_col_name]] > 2.25) / n(),
-        
-        # 3. Proportion of Moderate to High Severity (CBI >= 1.26 & CBI <= 3.0)
-        prop_mod_high_sev = sum(.data[[cbi_col_name]] >= 1.26 & .data[[cbi_col_name]] <= 3.0) / n(),
-        .groups = "drop"
-      )
-    
-    # Bind the summarized metrics back onto the spatial plot rows
-    # The 'ID' column generated by terra perfectly matches the row index of v_polys
-    polys_summarized <- polys %>%
-      mutate(ID = row_number()) %>%
-      left_join(cbi_summary, by = "ID") %>%
-      select(-ID)
-    
-    return(polys_summarized)
-    
-  }) %>%
-  arrange(row_id) %>%   # Reorder rows back to the exact input state
-  select(-row_id)
-
-## Join rdnbr
-# 1. List all rdnbr files and name the list using the Fire IDs from the filenames
-rdnbr_dir <- "data/processed/GEE/FireSeverity/rdnbr"
-rdnbr_list <- list.files(path = rdnbr_dir, pattern = "\\.tif$", full.names = TRUE)
-rdnbr_names <- tools::file_path_sans_ext(basename(rdnbr_list))
-names(rdnbr_list) <- rdnbr_names
-
-# 2. Match coordinate reference systems using the first available raster
-if (length(rdnbr_list) > 0) {
-  first_raster <- rast(rdnbr_list[[1]])
-  allplots_proj <- st_transform(allplots, crs(first_raster))
-} else {
-  stop("No .tif files found in the specified rdnbr directory.")
-}
-
-# 3. Loop through each unique fire, extract pixel values, and calculate thresholds
-allplots_with_rdnbr <- allplots_with_cbi %>%
+# Loop through each unique fire, extract pixel values, and calculate thresholds
+allplots_with_rdnbr <- allplots_proj %>%
   mutate(row_id = row_number()) %>%  # Track original row order
   split(.$Event_ID) %>%              # Split into a list of datasets by Fire ID
   imap_dfr(function(polys, fire) {
@@ -912,8 +769,10 @@ allplots_with_rdnbr <- allplots_with_cbi %>%
     match_idx <- grep(fire, names(rdnbr_list))
     
     if (length(match_idx) == 0 || is.na(match_idx[1])) {
-      warning(paste("No matching rdnbr raster found for fire ID:", fire))
+      warning(paste("No matching RdNBR raster found for fire ID:", fire))
       polys$mean_rdnbr <- NA_real_
+      polys$prop_high_sev <- NA_real_
+      polys$prop_mod_high_sev <- NA_real_
       return(polys)
     }
     
@@ -936,7 +795,13 @@ allplots_with_rdnbr <- allplots_with_cbi %>%
       group_by(ID) %>%
       summarize(
         # 1. Continuous Mean
-        mean_rdnbr = mean(.data[[rdnbr_col_name]]),
+        Mean_RdNBR = mean(.data[[rdnbr_col_name]]),
+        
+        # 2. Proportion of High Severity (RdNBR >= 727)
+        Prop_High_Sev = sum(.data[[rdnbr_col_name]] >= 727) / n(),
+        
+        # 3. Proportion of Moderate to High Severity (RdNBR >= 339 & RdNBR <= 726)
+        Prop_Mod_High_Sev = sum(.data[[rdnbr_col_name]] >= 339 & .data[[rdnbr_col_name]] <= 726) / n(),
         .groups = "drop"
       )
     
@@ -953,8 +818,7 @@ allplots_with_rdnbr <- allplots_with_cbi %>%
   arrange(row_id) %>%   # Reorder rows back to the exact input state
   select(-row_id)
 
-
-# 4. Project your plots back to your target project CRS
+# Project your plots back to your target project CRS
 allplots <- st_transform(allplots_with_rdnbr, target_crs)
 ```
 
