@@ -68,7 +68,7 @@ flat <- st_union(treatments)
 
 # Plot Selection
 
-Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer). Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin, subject to a 1000 m minimum spacing.
+Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer). Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin (though this does not restrict selection), subject to a 1000 m minimum spacing.
 
 ```{r}
 # Shrink the fires by 550m to satisfy the edge requirement
@@ -81,7 +81,7 @@ strat_radius <- 250                      # scale used to define gradient bins
 bin_breaks   <- c(-Inf, 0, 0.10, 0.25, 0.50, 0.75, 0.99, Inf)
 bin_labels   <- c("0", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
 quota        <- setNames(rep(50, length(bin_labels)), bin_labels)  # max plots per bin, per fire
-quota["0"]   <- 50
+quota["0"]   <- 200
 n_bg         <- 500                      # candidates across the whole fire interior
 n_edge       <- 1500                     # candidates near treatment boundaries
 edge_width   <- 300                      # m on either side of a treatment boundary
@@ -214,6 +214,10 @@ final_points %>%
   st_drop_geometry() %>%
   count(Incid_Name, bin) %>%
   pivot_wider(names_from = bin, values_from = n, values_fill = 0)
+
+final_points %>%
+  st_drop_geometry() %>%
+  count(Incid_Name)
 ```
  
 ## Save object
@@ -268,7 +272,7 @@ st_write(
 
 This section selects transects entering and exiting treatment boundaries as well as control transects.
 
-## Pre-Processing 
+## Pre-Processing: Fire Origins
 
 Prepare data by finding fire origins and creating a csv with 360 rows and an empty column for each fire. In ArcGIS, create radial lines from the fire origin. Generate points every 50m along each radial line. Create columns with a line ID and distance along line.
 
@@ -330,6 +334,9 @@ occurrence_in_fires <- st_join(
   filter(occurrence_year == Fire_Year,
          IncidentName == Incid_Name) %>%
   dplyr::select(c("Event_ID", "Incid_Name", "Ig_Date", "Fire_Year", "Area_SqM"))
+
+# Save for visually confirming transect orientation with Day of Burning
+st_write(occurrence_in_fires, here("data", "processed", "ignition_points.shp"), append=FALSE)
 
 # Prep and Convert to CSV for ArcGIS Methods
 # Extract the Projected Coordinates (X and Y)

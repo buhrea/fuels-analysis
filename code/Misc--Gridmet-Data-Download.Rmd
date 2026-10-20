@@ -5,7 +5,7 @@ date: "`r Sys.Date()`"
 output: word_document
 ---
 
-This code downloads weather variables from ClimateNA, Daymet, GridMet and TCC from Landfire (the latter two not used in analysis). All other data was downloaded manually.
+This code downloads weather variables from PRISM, GridMet and TCC from Landfire (the latter two not used in analysis). All other data was downloaded manually.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -20,29 +20,43 @@ library(keyring)
 library(appeears) #Download daymet from Nasa Earthdata
 library(sf) #Use to request daymet data for a polygon
 library(ClimateNAr) #Download ClimateNA Data
+library(prism) #Download prism data
 ```
 
-# ClimateNA
+# PRISM
 
-```{r climateNA}
-# Load Colorado Shapefile to use to Crop elevation raster for input
-fires_cna <- st_read("C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/fuels_analysis.gpkg", layer = "fires") %>% 
-  st_transform("EPSG:5070")
+PRISM provides 800-m resolution modeled weather and climate data. We will use it to obtain 30-year normals and annual data for temperature and precipitation.
 
-#Load DEM Raster and Crop to state
-dem <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif") %>%
-  crop(fires_cna) %>%
-  mask(fires_cna) %>%
-  project("EPSG:4326") #Project to WGS84 for use with ClimateNA
+```{r prism}
+prism_set_dl_dir("D:/Spatial_Data/PRISM/")
+  
+get_prism_annual(
+  type = "ppt", 
+  years = 1980:2024, 
+  resolution = "800m", 
+  keepZip = FALSE
+)
 
-#Save DEM so we can just upload it as a path
-writeRaster(dem, "D:/Spatial_Data/ClimateNA/dem_wgs84.tif", overwrite = TRUE, NAflag = -9999)
+get_prism_annual(
+  type = "tmean", 
+  years = 1980:2024, 
+  resolution = "800m", 
+  keepZip = FALSE
+)
 
-# Normals
-ClimateNAr(inputFile = 'D:/Spatial_Data/ClimateNA/dem_wgs84.tif', periodList = c('Normal_1981_2010.nrm'), varList = c('MAT', 'MAP', 'CMD', 'Eref', 'Tave_sm'), outDir = 'D:/Spatial_Data/ClimateNA/')
+get_prism_annual(
+  type = "vpdmin", 
+  years = 1980:2024, 
+  resolution = "800m", 
+  keepZip = FALSE
+)
 
-# Annual
-ClimateNAr(inputFile = 'D:/Spatial_Data/ClimateNA/dem_wgs84.tif', periodList = 2010:2024, varList = c('MAT', 'MAP', 'CMD', 'Eref'), outDir = 'D:/Spatial_Data/ClimateNA/')
+get_prism_annual(
+  type = "vpdmax", 
+  years = 1980:2024, 
+  resolution = "800m", 
+  keepZip = FALSE
+)
 ```
 
 # Weather

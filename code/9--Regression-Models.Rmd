@@ -42,20 +42,6 @@ transects$treated <- ifelse(transects$TRT_TYPE == "Untreated", "No", "Yes")
 transects$treated <- factor(transects$treated, levels = c("No", "Yes"))
 transects$AGE <- ifelse(transects$TRT_TYPE == "Untreated", 0, transects$AGE)
 
-#Sort start of transects into L/M/H based on average severity of first 5 points
-transects <- transects %>%
-  group_by(Transect_ID) %>% 
-mutate(
-    start_value = mean(rdnbr[Point_ID %in% 1:5], na.rm = TRUE),
-    START_SEV = case_when(
-      start_value <= 338              ~ "Low",
-      start_value >= 339 & start_value <= 726 ~ "Moderate",
-      start_value >= 727              ~ "High",
-    )
-  ) %>%
-  ungroup() %>%
-  select(-start_value)
-
 #Drop geometry
 transects <- st_drop_geometry(transects)
 ```
