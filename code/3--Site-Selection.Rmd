@@ -81,7 +81,7 @@ strat_radius <- 250                      # scale used to define gradient bins
 bin_breaks   <- c(-Inf, 0, 0.10, 0.25, 0.50, 0.75, 0.99, Inf)
 bin_labels   <- c("0", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
 quota        <- setNames(rep(50, length(bin_labels)), bin_labels)  # max plots per bin, per fire
-quota["0"]   <- 200
+quota["0"]   <- 50
 n_bg         <- 500                      # candidates across the whole fire interior
 n_edge       <- 1500                     # candidates near treatment boundaries
 edge_width   <- 300                      # m on either side of a treatment boundary

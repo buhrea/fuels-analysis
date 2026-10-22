@@ -192,6 +192,9 @@ transects <- transects %>%
 # left = TRUE ensures we keep all transect points, even if they have NO treatments
 joined_raw <- st_join(transects, treats, join = st_intersects, left = TRUE)
 
+#In the case of multiple treatments in the same year, assign a hierarchy to choosing Trt_Type
+trt_priority <- c("Wildfire", "Broadcast Burn", "Removal", "Rearrangement")
+
 # Clean up the geometry and process the overlaps
 # We drop geometry temporarily to make the group/summarize operations fast on RAM
 treatment_summary <- joined_raw %>%
@@ -214,7 +217,7 @@ treatment_summary <- joined_raw %>%
   
   # Arrange by YEAR_COMP (descending) so the latest year is always on top (Row 1)
   # using NA_real_ sort behavior to keep untreated points accessible
-  arrange(desc(YEAR_COMP), .by_group = TRUE) %>%
+  arrange(desc(YEAR_COMP), match(Trt_Type, trt_priority), desc(OBJECTID), .by_group = TRUE) %>%
   
   # Keep only the top row per point (the latest treatment)
   slice(1) %>%
@@ -256,12 +259,10 @@ treated_footprint <- st_intersection(allplots_base %>% select(plot_id), st_union
   st_drop_geometry() %>%
   select(plot_id, treated_area_no_overlap)
 
-# Calculate the actual raw count of treatments that touched each plot boundary
+# Calculate the earliest Treatment year
 overlap_counts <- plots_joined_raw %>%
   group_by(plot_id) %>%
   summarize(
-    # How many unique treatment shapes physically intersected this plot footprint?
-    Trt_Count = n_distinct(treatment_id),
     # What is the minimum treatment year intersecting this plot footprint?
     TCC_Year = min(YEAR_COMP),
     .groups = "drop"
@@ -269,15 +270,48 @@ overlap_counts <- plots_joined_raw %>%
 
 # Compute Categorical Proportions and Weighted Means
 # Process continuous variables (Area-Weighted Means for Trt_Year and Age)
-continuous_summary <- plots_joined_raw %>%
+# 1. Dissolve treatments by year, newest first
+treats_by_year <- treats %>%
+  st_make_valid() %>%
+  group_by(YEAR_COMP) %>%
+  summarize(.groups = "drop") %>%
+  arrange(desc(YEAR_COMP))
+
+# 2. Make the year layers non-overlapping: each year keeps only the area
+#    not already covered by any newer year ("latest wins")
+geoms   <- st_geometry(treats_by_year)
+covered <- geoms[1]                        # running union of newer treatments
+
+for (i in seq_along(geoms)[-1]) {
+  this_geom <- geoms[i]
+  geoms[i]  <- st_difference(this_geom, covered)
+  covered   <- st_union(c(covered, this_geom))   # add the ORIGINAL footprint
+}
+
+st_geometry(treats_by_year) <- geoms
+
+# Drop years that were completely covered by newer treatments
+treats_by_year <- treats_by_year %>%
+  filter(!st_is_empty(.)) %>%
+  st_make_valid()
+
+# 3. Intersect plots with the non-overlapping layer
+plots_by_year <- st_intersection(
+  allplots_base %>% select(plot_id, Fire_Year),
+  treats_by_year
+) %>%
+  mutate(slice_area = as.numeric(st_area(.))) %>%
+  filter(slice_area > 0) %>%               # drop edge-touching slivers
+  st_drop_geometry()
+
+# 4. Area-weighted mean of the "latest wins" year
+continuous_summary <- plots_by_year %>%
   group_by(plot_id) %>%
   summarize(
-    # Weight the completion year by the size of the slice it covers inside the plot
     Trt_Year = sum(YEAR_COMP * slice_area) / sum(slice_area),
-    Trt_Age = first(Fire_Year) - Trt_Year,
+    Trt_Age  = first(Fire_Year) - Trt_Year,
     .groups = "drop"
   )
-
 # Process categorical variables (Proportions of Plot Area)
 # Dissolve treatment polygons by type first, so overlapping polygons
 # of the same TRT_TYPE don't get double-counted
@@ -314,11 +348,7 @@ allplots_final <- allplots_base %>%
   left_join(categorical_summary, by = "plot_id") %>%
   mutate(
     # Convert metrics to structural zeros/defaults if the plot never touched a treatment
-    Prop_Treated = coalesce(treated_area_no_overlap / total_plot_area, 0),
-    Trt_Count = coalesce(Trt_Count, 0),
-    # Safety Check: If TOTAL_COUNT is 0, make sure TCC_Year is NA, not Inf
-    TCC_Year = ifelse(Trt_Count > 0, TCC_Year, NA_real_)
-  ) %>%
+    Prop_Treated = coalesce(treated_area_no_overlap / total_plot_area, 0)) %>%
   # Clean up structural calculation columns and replace missing join values with 0
   select(-plot_id, -total_plot_area, -treated_area_no_overlap) %>%
   mutate(across(starts_with("Prop_"), ~coalesce(., 0))) 
@@ -617,8 +647,8 @@ allplots_with_rdnbr <- allplots_proj %>%
         # 2. Proportion of High Severity (RdNBR >= 727)
         Prop_High_Sev = sum(.data[[rdnbr_col_name]] >= 727) / n(),
         
-        # 3. Proportion of Moderate to High Severity (RdNBR >= 339 & RdNBR <= 726)
-        Prop_Mod_High_Sev = sum(.data[[rdnbr_col_name]] >= 339 & .data[[rdnbr_col_name]] <= 726) / n(),
+        # 3. Proportion of Moderate to High Severity (RdNBR >= 339)
+        Prop_Mod_High_Sev = sum(.data[[rdnbr_col_name]] >= 339) / n(),
         .groups = "drop"
       )
     
