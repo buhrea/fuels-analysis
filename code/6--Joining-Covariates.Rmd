@@ -119,145 +119,44 @@ allplots <- allplots %>%
 
 # Fire Weather
 
-As a stand in for individual fire weather variables, we will use the Daily Area Burned and a binary "Extremeness" variable based on Daily Area Burned following Balik 2024 definition for the Northwestern Forested Mountains Ecoregion (https://doi.org/10.3389/ffgc.2024.1355361).
+As a stand in for individual fire weather variables, we will use the Daily Area Burned, Daily Spread, and a binary "Extremeness" variable based on Daily Area Burned following Balik 2024 definition for the Northwestern Forested Mountains Ecoregion (https://doi.org/10.3389/ffgc.2024.1355361).
 
-This section uses the Day of Burning rasters created in the previous script.
-
-## Day of Burning
+This section uses the Day of Burning geopackages created in the previous script.
 
 ```{r dob}
-doblist <- list.files(path = "C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/DOB", pattern = "\\.tif$", full.names = TRUE)
-dob_rast <- lapply(doblist, terra::rast)
+doblist <- list.files("C:/Users/Elizabeth Buhr/OneDrive/Documents/fuels-analysis/data/processed/DOB",
+                      pattern = "\\.gpkg$", full.names = TRUE)
 
-# Reproject transects to match raster CRS
-transects_proj <- st_transform(transects, crs(dob_rast[[1]]))
-crs(dob_rast[[1]])
-# Extract fire name/ID from filenames to use as a matching key
-fire_names <- tools::file_path_sans_ext(basename(doblist))
-names(dob_rast) <- fire_names
-
-# Extract DOB for each transect point from its matching raster
-# This loops over each unique fire, extracts from the right raster, then recombines
-
-transects_dob <- transects_proj %>%
-  mutate(row_id = row_number()) %>%  # preserve original order
-  split(.$Event_ID) %>%              
-  imap_dfr(function(pts, fire) {
-    
-    # Find the matching raster 
-    rast_match <- dob_rast[[grep(fire, names(dob_rast), value = TRUE)[1]]]
-    
-    # Extract values
-    extracted <- terra::extract(rast_match, vect(pts))
-    pts$dob <- extracted[, 2]  # column 1 is ID, column 2 is the raster value
-    return(pts)
-    
-  }) %>%
-  arrange(row_id) %>%   # restore original order
-  select(-row_id)
-
-transects <- transects_dob %>%
-  mutate(date = as.Date(paste(Fire_Year, dob, sep = "-"), format = "%Y-%j"))
-
-#Plots join
-# Reproject plots to match the raster CRS
-allplots_proj <- st_transform(allplots, crs(dob_rast[[1]]))
-
-# Define a custom function to find the most common value (majority)
-get_majority <- function(x, na.rm = TRUE) {
-  if (na.rm) x <- x[!is.na(x)]
-  if (length(x) == 0) return(NA_real_)
-  
-  ux <- unique(x)
-  ux[which.max(tabulate(match(x, ux)))]
-}
-
-# Extract DOB for each plot polygon from its matching raster
-allplots_dob <- allplots_proj %>%
-  mutate(row_id = row_number()) %>%  # preserve original order
-  split(.$Event_ID) %>%              
-  imap_dfr(function(polys, fire) {
-    
-    # Find the matching raster
-    match_idx <- grep(fire, names(dob_rast))
-    
-    rast_match <- dob_rast[[match_idx[1]]]
-    
-    # Extract values using our custom majority function
-    extracted <- terra::extract(
-      x = rast_match, 
-      y = vect(polys), 
-      fun = get_majority,
-      na.rm = TRUE, 
-      ID = FALSE
-    )
-    
-    # Assign extracted values to a new dob column
-    polys$dob <- extracted[[1]] 
-    return(polys)
-    
-  }) %>%
-  arrange(row_id) %>%   # restore original order
-  select(-row_id)
-
-# Calculate calendar date from Julian day
-allplots <- allplots_dob %>%
-  mutate(date = as.Date(paste(Fire_Year, dob, sep = "-"), format = "%Y-%j"))
-```
-
-## Daily Area Burned
-
-```{r daily-area}
-daily_area_burned <- imap_dfr(dob_rast, function(rast_match, fire) {
-  area_rast <- terra::cellSize(rast_match, unit = "ha")
-  
-  zonal_result <- terra::zonal(area_rast, rast_match, fun = "sum", na.rm = TRUE) %>%
-    as.data.frame() %>%
-    rename(dob = 1, area_ha = 2) %>%   # column names depend on your raster's layer name
-    filter(!is.na(dob)) %>%
-    mutate(Event_ID = fire)
-  
-  return(zonal_result)
+dob_list <- lapply(doblist, function(f) {
+  st_read(f, quiet = TRUE) %>% 
+    st_transform(target_crs) %>%
+    select(firearea, sprdistm) #Daily Area Burned and Unidirectional Spread
 })
 
-daily_area_burned <- daily_area_burned %>%
-  mutate(Event_ID = str_remove(Event_ID, "_DOB$")) #fix mismatched naming
+names(dob_list) <- sub("_DOB$", "", tools::file_path_sans_ext(basename(doblist)))
+
+join_dob <- function(x, largest = FALSE) {
+  x %>%
+    mutate(row_id = row_number()) %>%
+    split(.$Event_ID) %>%
+    imap_dfr(function(feat, fire) {
+      d <- dob_list[[fire]]                      # exact match, no grep()
+      if (is.null(d)) return(feat)               # fire with no DOB file -> NAs
+      st_join(feat, d, join = st_intersects, largest = largest)
+    }) %>%
+    distinct(row_id, .keep_all = TRUE) %>%       # guards against points on a shared polygon edge
+    arrange(row_id) %>%
+    select(-row_id) %>%
+    rename(Daily_Area = firearea,
+           Daily_Spread = sprdistm)
+}
 
 transects <- transects %>%
-  left_join(
-    daily_area_burned %>% select(Event_ID, dob, DailyAreaBurned = area_ha),
-    by = c("Event_ID", "dob")
-  ) %>%
-  select(-c(dob, date))
-
+  join_dob() %>%
+  mutate(Extreme = Daily_Area > 4127)
 allplots <- allplots %>%
-  left_join(
-    daily_area_burned %>% select(Event_ID, dob, DailyAreaBurned = area_ha),
-    by = c("Event_ID", "dob")
-  ) %>%
-  select(-c(dob, date))
-
-#Reproject transects back to target crs
-transects <- st_transform(transects, target_crs)
-# Reproject plots back to your target CRS
-allplots <- st_transform(allplots, target_crs)
-```
-
-### Extremeness
-
-```{r extreme}
-# Daily Area Burned Extreme - Following Balik 2024 definition for northwestern forested mountains ecoregion (https://doi.org/10.3389/ffgc.2024.1355361)
-# Transects
-transects <- transects %>%
-  mutate(
-    Extreme = DailyAreaBurned > 4127
-  )
-
-# Plots
-allplots <- allplots %>%
-  mutate(
-    Extreme = DailyAreaBurned > 4127
-  )
+  join_dob(largest = TRUE) %>%
+  mutate(Extreme = Daily_Area > 4127)
 ```
 
 # Climate
@@ -419,7 +318,7 @@ treats_prep <- treats %>%
 
 # Compute Total Treated Extent AND Count of Overlaps
 # We use st_intersection with the raw treats layer to find out how many shapes hit each plot area
-plots_joined_raw <- st_intersection(allplots_base %>% select(plot_id, total_plot_area), treats_prep) %>%
+plots_joined_raw <- st_intersection(allplots_base %>% select(plot_id, total_plot_area, Fire_Year), treats_prep) %>%
   mutate(slice_area = as.numeric(st_area(.))) %>%
   st_drop_geometry()
 
@@ -436,19 +335,18 @@ overlap_counts <- plots_joined_raw %>%
     # How many unique treatment shapes physically intersected this plot footprint?
     Trt_Count = n_distinct(treatment_id),
     # What is the minimum treatment year intersecting this plot footprint?
-    # Since plots_joined_raw only has rows for actual intersections, na.rm isn't strictly needed,
-    # but it keeps things robust.
-    TCC_Year = min(YEAR_COMP, na.rm = TRUE),
+    TCC_Year = min(YEAR_COMP),
     .groups = "drop"
   )
 
 # Compute Categorical Proportions and Weighted Means
-# Process continuous variables (Area-Weighted Means for YEAR_COMP)
+# Process continuous variables (Area-Weighted Means for Trt_Year and Age)
 continuous_summary <- plots_joined_raw %>%
   group_by(plot_id) %>%
   summarize(
     # Weight the completion year by the size of the slice it covers inside the plot
-    Trt_Year_Mean = sum(YEAR_COMP * slice_area) / sum(slice_area),
+    Trt_Year = sum(YEAR_COMP * slice_area) / sum(slice_area),
+    Trt_Age = first(Fire_Year) - Trt_Year,
     .groups = "drop"
   )
 
