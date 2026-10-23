@@ -171,3 +171,79 @@ plot_list <- map(vars_to_plot, ~{
 walk(plot_list, print)
 ```
 
+# Copy over from regressions code, need to update
+
+## Transects by Type in each Fire and Starting Severity
+
+```{r, results = 'asis'}
+# Build abbreviation lookup once, outside the pipe
+fire_abbrevs <- jones_df %>% 
+  st_drop_geometry() %>% 
+  distinct(Incid_Name) %>% 
+  arrange(Incid_Name) %>% 
+  mutate(abbrev = abbreviate(Incid_Name, minlength = 3)) %>% 
+  tibble::deframe()  
+
+jones_df %>% 
+  st_drop_geometry() %>% 
+  count(Starting_Sev, Incid_Name, Type) %>% 
+  dplyr::mutate(
+    n = n / 10,
+    Starting_Sev = factor(Starting_Sev, levels = c("Low", "Moderate", "High")),
+    Type = factor(Type, levels = c("control", "entering", "exiting")),
+    Incid_Name = fire_abbrevs[Incid_Name]  # swap to abbreviation before pivoting
+  ) %>% 
+  tidyr::pivot_wider(
+    names_from = Incid_Name,
+    values_from = n,
+    values_fill = 0
+  ) %>% 
+  dplyr::arrange(Starting_Sev, Type) %>% 
+  dplyr::mutate(
+    Total = rowSums(dplyr::across(where(is.numeric)))
+  ) %>% 
+  dplyr::group_split(Starting_Sev) %>% 
+  purrr::iwalk(~ {
+    cat("\n\n###", as.character(unique(.x$Starting_Sev)), "\n\n")
+    print(
+      knitr::kable(
+        dplyr::select(.x, -Starting_Sev),
+        format = "pipe"
+      )
+    )
+  })
+
+
+# Print the key once, after all three tables
+cat("\n\n**Key:**", paste(names(fire_abbrevs), fire_abbrevs, sep = " = ", collapse = "; "), "\n\n")
+```
+
+## Points by Treatment Type in each EVT Group and Starting Severity
+
+```{r, results = 'asis'}
+#Table of Transects by Type in each EVT Group
+jones_df %>% 
+  st_drop_geometry() %>% 
+  count(Starting_Sev, EVT, Treated) %>% 
+  dplyr::mutate(
+    n = n,
+    Starting_Sev = factor(Starting_Sev, levels = c("Low", "Moderate", "High"))
+  ) %>% 
+  tidyr::pivot_wider(
+    names_from = EVT,
+    values_from = n,
+    values_fill = 0
+  ) %>% 
+  dplyr::arrange(Starting_Sev, Treated) %>% 
+  dplyr::group_split(Starting_Sev) %>% 
+  purrr::iwalk(~ {
+    cat("\n\n###", as.character(unique(.x$Starting_Sev)), "\n\n")
+    print(
+      knitr::kable(
+        dplyr::select(.x, -Starting_Sev),
+        format = "pipe"
+      )
+    )
+  })
+```
+

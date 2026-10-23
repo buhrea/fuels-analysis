@@ -446,9 +446,6 @@ tcc_years <- str_extract(basename(all_tcc_files), "(19|20)\\d{2}(?=0101)")
 # Build a clean named vector where the names are the years and values are paths
 tcc_file_map <- all_tcc_files
 names(tcc_file_map) <- tcc_years
-
-# Quick check: print years found
-print(names(tcc_file_map))
 ```
 
 Join transects

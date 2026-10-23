@@ -1,5 +1,5 @@
 ---
-title: "7--Random-Forest"
+title: "Random Forest Models"
 author: "Elizabeth Buhr"
 date: "`r Sys.Date()`"
 output:
@@ -14,7 +14,7 @@ output:
 library(knitr)
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, tidy = TRUE)
 
-set.seed(123)
+set.seed(42)
 ```
 
 # Load Packages
@@ -52,26 +52,16 @@ plots_500m <- filter(plots, Radius == 500)
 VIF and linear correlation
 
 ```{r correlation}
-model1 <- lm(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Extreme + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Removal + Prop_Rearrangement + Prop_Broadcast.Burn + Prop_Wildfire + Prop_Treated + Prop_Conifer + Prop_Conifer_Hardwood + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = plots)
+model1 <- lm(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + Extreme + TCC + Prop_Conifer + Prop_Conifer_Hardwood + Prop_Hardwood + Prop_Shrubland, data = plots)
 
 vif(model1)
 
-# Removing Extremeness in favor of DailyAreaBurned
-model2 <- lm(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Removal + Prop_Rearrangement + Prop_Broadcast.Burn + Prop_Wildfire + Prop_Treated + Prop_Conifer + Prop_Conifer_Hardwood + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = plots)
+# Removing Extreme in favor of Daily_Area and removing Conifer_Hardwood in favor of Conifer
+model2 <- lm(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = plots)
 
 vif(model2)
 
-# Removing individual treatment types in favor of Prop_Treated
-model3 <- lm(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Conifer_Hardwood + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = plots)
-
-vif(model3)
-
-# Removing Prop_Conifer_Hardwood. At smallest scale prop_conifer is just over 5
-model4 <- lm(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = plots)
-
-vif(model4) 
-
-preds <- c("Northness", "Elevation", "Slope", "HLI", "DailyAreaBurned", "Ppt_Z", "Tmean_Z", "Vpdmin_Z", "Vpdmax_Z", "Trt_Count", "Trt_Year_Mean", "Prop_Treated", "Prop_Conifer", "Prop_Hardwood", "Prop_Grassland", "Prop_Shrubland", "Prop_Riparian", "Prop_Exotic_Herbaceous", "TCC") #For use later in VIPs
+preds <- c("Prop_Treated", "Trt_Age", "Northness", "Elevation", "Slope", "Daily_Area", "TCC", "Prop_Conifer", "Prop_Hardwood", "Prop_Shrubland") #For use later in VIPs
 ```
 
 # Proportion of High-Severity
@@ -86,7 +76,7 @@ hi100_test  <- testing(data_split_hi100)
 
 Create a recipe
 ```{r hi100-rec}
-hi100_rec <- recipe(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = hi100_train)
+hi100_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = hi100_train)
 
 hi100_prep <- prep(hi100_rec)
 ```
@@ -112,10 +102,9 @@ Tune hyperparameters based on RMSE
 hi100_folds <- spatial_clustering_cv(hi100_train)
 
 doParallel::registerDoParallel()
-#show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 19)),
+  mtry(range = c(1, 10)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -226,7 +215,7 @@ hi250_test  <- testing(data_split_hi250)
 
 Create a recipe
 ```{r hi250-rec}
-hi250_rec <- recipe(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = hi250_train)
+hi250_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = hi250_train)
 
 hi250_prep <- prep(hi250_rec)
 ```
@@ -255,7 +244,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 19)),
+  mtry(range = c(1, 10)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -366,7 +355,7 @@ hi500_test  <- testing(data_split_hi500)
 
 Create a recipe
 ```{r hi500-rec}
-hi500_rec <- recipe(Prop_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = hi500_train)
+hi500_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = hi500_train)
 
 hi500_prep <- prep(hi500_rec)
 ```
@@ -395,7 +384,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 19)),
+  mtry(range = c(1, 10)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -507,7 +496,7 @@ mohi100_test  <- testing(data_split_mohi100)
 
 Create a recipe
 ```{r mohi100-rec}
-mohi100_rec <- recipe(Prop_Mod_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = mohi100_train)
+mohi100_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = mohi100_train)
 
 mohi100_prep <- prep(mohi100_rec)
 ```
@@ -541,7 +530,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 19)),
+  mtry(range = c(1, 10)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -652,7 +641,7 @@ mohi250_test  <- testing(data_split_mohi250)
 
 Create a recipe
 ```{r mohi250-rec}
-mohi250_rec <- recipe(Prop_Mod_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = mohi250_train)
+mohi250_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = mohi250_train)
 
 mohi250_prep <- prep(mohi250_rec)
 ```
@@ -681,7 +670,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 19)),
+  mtry(range = c(1, 10)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -793,7 +782,7 @@ mohi500_test  <- testing(data_split_mohi500)
 
 Create a recipe
 ```{r mohi500-rec}
-mohi500_rec <- recipe(Prop_Mod_High_Sev ~ Northness + Elevation + Slope + HLI + DailyAreaBurned + Ppt_Z + Tmean_Z + Vpdmin_Z + Vpdmax_Z + Trt_Count + Trt_Year_Mean + Prop_Treated + Prop_Conifer + Prop_Hardwood + Prop_Grassland + Prop_Shrubland + Prop_Riparian + Prop_Exotic_Herbaceous + TCC, data = mohi500_train)
+mohi500_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = mohi500_train)
 
 mohi500_prep <- prep(mohi500_rec)
 ```
@@ -822,7 +811,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 19)),
+  mtry(range = c(1, 10)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -930,7 +919,7 @@ plot(pdp_mohi500)
 
 Variable Importance
 
-```{r}
+```{r comb-vip}
 # --- PANEL A: High-Severity Fire VIP ---
 vip_hi_list <- list(
   "100m"  = vip_hi100,
@@ -982,7 +971,7 @@ df_vip_mohi <- map_dfr(vip_mohi_list, as.data.frame, .id = "Scale") %>%
 
 Partial Dependence Plot
 
-```{r}
+```{r comb-pdp}
 # --- PANEL B: High-Severity PDP ---
 pdp_hi_list <- list(
   "100m"  = pdp_hi100,
@@ -1008,7 +997,7 @@ df_pdp_mohi <- map_dfr(pdp_mohi_list, ~ .x$agr_profiles, .id = "Scale") %>%
 
 Build ggplots
 
-```{r}
+```{r comb-plot}
 # Custom color palette
 scale_colors <- c(
   "100m"  = "#0d0887",
@@ -1051,11 +1040,7 @@ p_d <- ggplot(df_pdp_mohi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
   guides(color = "none") + 
   theme_bw() +
   theme(panel.grid.minor = element_blank())
-```
 
-Combine plots
-
-```{r}
 fig1 <- (p_a + p_b) / (p_c + p_d) +
   plot_layout(guides = "collect") +
   plot_annotation(tag_levels = "a") &
@@ -1070,7 +1055,7 @@ print(fig1)
 
 ## Interaction PDPs
 
-```{r}
+```{r int-prep}
 hi100_train <- hi100_train %>% st_drop_geometry
 hi250_train <- hi250_train %>% st_drop_geometry
 hi500_train <- hi500_train %>% st_drop_geometry
@@ -1087,10 +1072,10 @@ pred_fun <- function(object, newdata) {
 
 Create dataframes
 
-```{r}
+```{r int-dab-data}
 pd_dab_hi100 <- pdp::partial(
   final_fitted_hi100,
-  pred.var = c("Prop_Treated", "DailyAreaBurned"),
+  pred.var = c("Prop_Treated", "Daily_Area"),
   train    = hi100_train,    
   pred.fun = pred_fun,
   chull = TRUE
@@ -1098,7 +1083,7 @@ pd_dab_hi100 <- pdp::partial(
 
 pd_dab_hi250 <- pdp::partial(
   final_fitted_hi250,
-  pred.var = c("Prop_Treated", "DailyAreaBurned"),
+  pred.var = c("Prop_Treated", "Daily_Area"),
   train    = hi250_train,    
   pred.fun = pred_fun,
   chull = TRUE
@@ -1106,43 +1091,19 @@ pd_dab_hi250 <- pdp::partial(
 
 pd_dab_hi500 <- pdp::partial(
   final_fitted_hi500,
-  pred.var = c("Prop_Treated", "DailyAreaBurned"),
+  pred.var = c("Prop_Treated", "Daily_Area"),
   train    = hi500_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_dab_mohi100 <- pdp::partial(
-  final_fitted_mohi100,
-  pred.var = c("Prop_Treated", "DailyAreaBurned"),
-  train    = mohi100_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_dab_mohi250 <- pdp::partial(
-  final_fitted_mohi250,
-  pred.var = c("Prop_Treated", "DailyAreaBurned"),
-  train    = mohi250_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_dab_mohi500 <- pdp::partial(
-  final_fitted_mohi500,
-  pred.var = c("Prop_Treated", "DailyAreaBurned"),
-  train    = mohi500_train,    
   pred.fun = pred_fun,
   chull = TRUE
 )
 ```
 
 Build ggplots
-```{r}
+```{r int-dab}
 lims_hi   <- range(c(pd_dab_hi100$yhat,   pd_dab_hi250$yhat,   pd_dab_hi500$yhat))
 lims_mohi <- range(c(pd_dab_mohi100$yhat, pd_dab_mohi250$yhat, pd_dab_mohi500$yhat))
 
-p1 <- ggplot(pd_dab_hi100, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
+p1 <- ggplot(pd_dab_hi100, aes(Prop_Treated, Daily_Area, fill = yhat)) +
   geom_raster() +
   scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
   labs(title = "100m", x = NULL, y = "Daily Area Burned",
@@ -1150,7 +1111,7 @@ p1 <- ggplot(pd_dab_hi100, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
-p2 <- ggplot(pd_dab_hi250, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
+p2 <- ggplot(pd_dab_hi250, aes(Prop_Treated, Daily_Area, fill = yhat)) +
   geom_raster() +
   scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
   labs(title = "250m", x = NULL, y = NULL) +
@@ -1158,7 +1119,7 @@ p2 <- ggplot(pd_dab_hi250, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
-p3 <- ggplot(pd_dab_hi500, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
+p3 <- ggplot(pd_dab_hi500, aes(Prop_Treated, Daily_Area, fill = yhat)) +
   geom_raster() +
   scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
   labs(title = "500m", x = NULL, y = NULL) +
@@ -1166,172 +1127,12 @@ p3 <- ggplot(pd_dab_hi500, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
-p4 <- ggplot(pd_dab_mohi100, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_mohi, na.value = "transparent") +
-  labs(title = "100m", x = "Proportion Treated Area", y = "Daily Area Burned",
-       fill = "Predicted Proportion\nMod/High-Severity") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p5 <- ggplot(pd_dab_mohi250, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_mohi, na.value = "transparent") +
-  labs(title = "250m", x = "Proportion Treated Area", y = NULL) +
-  guides(fill = "none") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p6 <- ggplot(pd_dab_mohi500, aes(Prop_Treated, DailyAreaBurned, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_mohi, na.value = "transparent") +
-  labs(title = "500m", x = "Proportion Treated Area", y = NULL) +
-  guides(fill = "none") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-```
-
-Combine plots
-
-```{r}
 row_hi   <- (p1 + p2 + p3) + plot_layout(guides = "collect")
-row_mohi <- (p4 + p5 + p6) + plot_layout(guides = "collect")
-
-fig2 <- row_hi / row_mohi &
-  theme(plot.tag = element_text(face = "bold", size = 14))
-
-fig2
 
 #Just High Severity
 fig3 <- row_hi &
   theme(plot.tag = element_text(face = "bold", size = 14))
 fig3
-```
-
-### Elevation x Extent Treated
-
-Create dataframes
-
-```{r}
-pd_elev_hi100 <- pdp::partial(
-  final_fitted_hi100,
-  pred.var = c("Prop_Treated", "Elevation"),
-  train    = hi100_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_elev_hi250 <- pdp::partial(
-  final_fitted_hi250,
-  pred.var = c("Prop_Treated", "Elevation"),
-  train    = hi250_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_elev_hi500 <- pdp::partial(
-  final_fitted_hi500,
-  pred.var = c("Prop_Treated", "Elevation"),
-  train    = hi500_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_elev_mohi100 <- pdp::partial(
-  final_fitted_mohi100,
-  pred.var = c("Prop_Treated", "Elevation"),
-  train    = mohi100_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_elev_mohi250 <- pdp::partial(
-  final_fitted_mohi250,
-  pred.var = c("Prop_Treated", "Elevation"),
-  train    = mohi250_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-
-pd_elev_mohi500 <- pdp::partial(
-  final_fitted_mohi500,
-  pred.var = c("Prop_Treated", "Elevation"),
-  train    = mohi500_train,    
-  pred.fun = pred_fun,
-  chull = TRUE
-)
-```
-
-Build ggplots
-```{r}
-lims_hi   <- range(c(pd_elev_hi100$yhat,   pd_elev_hi250$yhat,   pd_elev_hi500$yhat))
-lims_mohi <- range(c(pd_elev_mohi100$yhat, pd_elev_mohi250$yhat, pd_elev_mohi500$yhat))
-
-p7 <- ggplot(pd_elev_hi100, aes(Prop_Treated, Elevation, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
-  labs(title = "100m", x = NULL, y = "Elevation",
-       fill = "Predicted Proportion\nHigh-Severity") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p8 <- ggplot(pd_elev_hi250, aes(Prop_Treated, Elevation, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
-  labs(title = "250m", x = NULL, y = NULL) +
-  guides(fill = "none") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p9 <- ggplot(pd_elev_hi500, aes(Prop_Treated, Elevation, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
-  labs(title = "500m", x = NULL, y = NULL) +
-  guides(fill = "none") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p10 <- ggplot(pd_elev_mohi100, aes(Prop_Treated, Elevation, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_mohi, na.value = "transparent") +
-  labs(title = "100m", x = "Proportion Treated Area", y = "Elevation",
-       fill = "Predicted Proportion\nMod/High-Severity") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p11 <- ggplot(pd_elev_mohi250, aes(Prop_Treated, Elevation, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_mohi, na.value = "transparent") +
-  labs(title = "250m", x = "Proportion Treated Area", y = NULL) +
-  guides(fill = "none") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-
-p12 <- ggplot(pd_elev_mohi500, aes(Prop_Treated, Elevation, fill = yhat)) +
-  geom_raster() +
-  scale_fill_viridis_c(limits = lims_mohi, na.value = "transparent") +
-  labs(title = "500m", x = "Proportion Treated Area", y = NULL) +
-  guides(fill = "none") +
-  theme_bw() +
-  theme(panel.grid.minor = element_blank())
-```
-
-Combine plots
-
-```{r}
-row_hi_elev   <- (p7 + p8 + p9) + plot_layout(guides = "collect")
-row_mohi_elev <- (p10 + p11 + p12) + plot_layout(guides = "collect")
-
-fig4 <- row_hi_elev / row_mohi_elev &
-  theme(plot.tag = element_text(face = "bold", size = 14))
-
-print(fig4)
-
-#Just High Severity
-fig5 <- row_hi_elev &
-  theme(plot.tag = element_text(face = "bold", size = 14))
-fig5
 ```
 
 # Average reduction in percent area burned at high severity between 0 and 1 treated area

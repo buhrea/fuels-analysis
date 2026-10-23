@@ -1,0 +1,430 @@
+---
+title: "Regression Models"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    df_print: paged
+  pdf_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 6, tidy = TRUE)
+```
+
+1. Transects were filtered to only include broadcast burning, wildfire, or Untreated points.
+
+Note: Incomplete transects (those with thinning-only points filtered out) were allowed in the dataset. 
+
+2. Six models were constructed for different combinations of starting severity and transect Type:
+
+Low x Entering, Moderate x Entering, High x Entering
+Low x Exiting, Moderate x Exiting, High x Exiting
+
+3. The model formula is:
+
+RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID)
+
+Where Type = control or entering/exiting & Treated = Untreated or broadcast/wildfire
+
+
+```{r prep, include=FALSE}
+library(tidyverse)
+library(sf)
+library(lme4)
+library(car)
+library(glmmTMB)
+library(DHARMa)
+library(ggeffects)
+library(brms)
+library(here)
+library(performance)
+library(sjPlot) #Table of model outputs
+
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
+
+#Create factors for random effects and categorical variables
+transects$Event_ID <- factor(transects$Event_ID)
+transects$Incid_Name <- factor(transects$Incid_Name)
+transects$TransectID <- factor(transects$Transect_ID)
+transects$Type <- factor(transects$Type, levels = c("control", "entering", "exiting"))
+
+transects$Trt_Type[is.na(transects$Trt_Type)] <- "Untreated"
+transects$Treated <- factor(ifelse(transects$Trt_Type == "Untreated", "No", "Yes"), levels = c("No", "Yes"))
+
+#Drop geometry
+transects <- st_drop_geometry(transects)
+```
+
+# Jones Dataset
+
+```{r, results = 'asis'}
+#Filter for only Broadcast Burning or Wildfire
+jones_df <- transects %>%
+  filter(!Trt_Type %in% c("Rearrangement", "Removal")) 
+```
+
+## Transects by Type in each Fire and Starting Severity
+
+```{r, results = 'asis'}
+# Build abbreviation lookup once, outside the pipe
+fire_abbrevs <- jones_df %>% 
+  st_drop_geometry() %>% 
+  distinct(Incid_Name) %>% 
+  arrange(Incid_Name) %>% 
+  mutate(abbrev = abbreviate(Incid_Name, minlength = 3)) %>% 
+  tibble::deframe()  
+
+jones_df %>% 
+  st_drop_geometry() %>% 
+  count(Starting_Sev, Incid_Name, Type) %>% 
+  dplyr::mutate(
+    n = n / 10,
+    Starting_Sev = factor(Starting_Sev, levels = c("Low", "Moderate", "High")),
+    Type = factor(Type, levels = c("control", "entering", "exiting")),
+    Incid_Name = fire_abbrevs[Incid_Name]  # swap to abbreviation before pivoting
+  ) %>% 
+  tidyr::pivot_wider(
+    names_from = Incid_Name,
+    values_from = n,
+    values_fill = 0
+  ) %>% 
+  dplyr::arrange(Starting_Sev, Type) %>% 
+  dplyr::mutate(
+    Total = rowSums(dplyr::across(where(is.numeric)))
+  ) %>% 
+  dplyr::group_split(Starting_Sev) %>% 
+  purrr::iwalk(~ {
+    cat("\n\n###", as.character(unique(.x$Starting_Sev)), "\n\n")
+    print(
+      knitr::kable(
+        dplyr::select(.x, -Starting_Sev),
+        format = "pipe"
+      )
+    )
+  })
+
+
+# Print the key once, after all three tables
+cat("\n\n**Key:**", paste(names(fire_abbrevs), fire_abbrevs, sep = " = ", collapse = "; "), "\n\n")
+```
+
+## Entering Datasets
+
+```{r}
+# Filter by Trt_Type to only include broadcast or wildfire
+enter_df <- jones_df %>%
+  filter(Type != "exiting")
+
+enter_df$Trt_Type <- factor(enter_df$Trt_Type, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
+enter_df$Type <- factor(enter_df$Type, levels = c("control", "entering"))
+
+enter_df_low <- enter_df %>%
+  filter(Starting_Sev == "Low")
+enter_df_mod <- enter_df %>%
+  filter(Starting_Sev == "Moderate")
+enter_df_high <- enter_df %>%
+  filter(Starting_Sev == "High")
+
+par(mfrow = c(3, 1))
+hist(enter_df_low$RdNBR, breaks = 30,
+     main = "Low Starting Severity Transects (Entering)", 
+     xlab = "RdNBR", 
+     ylab = "Frequency")
+hist(enter_df_mod$RdNBR, breaks = 30,
+     main = "Moderate Starting Severity Transects (Entering)", 
+     xlab = "RdNBR", 
+     ylab = "Frequency")
+hist(enter_df_high$RdNBR, breaks = 30,
+     main = "High Starting Severity Transects (Entering)", 
+     xlab = "RdNBR", 
+     ylab = "Frequency")
+par(mfrow = c(1, 1))
+```
+
+## Exiting Datasets
+
+```{r}
+# Filter by Trt_Type to only include broadcast or wildfire
+exit_df <- jones_df %>%
+  filter(Type != "entering")
+
+exit_df$Trt_Type <- factor(exit_df$Trt_Type, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
+exit_df$Type <- factor(exit_df$Type, levels = c("control", "exiting"))
+
+exit_df_low <- exit_df %>%
+  filter(Starting_Sev == "Low") 
+exit_df_mod <- exit_df %>%
+  filter(Starting_Sev == "Moderate") 
+exit_df_high <- exit_df %>%
+  filter(Starting_Sev == "High") 
+
+par(mfrow = c(3, 1))
+hist(exit_df_low$RdNBR, breaks = 30,
+     main = "Low Starting Severity Transects (Exiting)", 
+     xlab = "RdNBR", 
+     ylab = "Frequency")
+hist(exit_df_mod$RdNBR, breaks = 30,
+     main = "Moderate Starting Severity Transects (Exiting)", 
+     xlab = "RdNBR", 
+     ylab = "Frequency")
+hist(exit_df_high$RdNBR, breaks = 30,
+     main = "High Starting Severity Transects (Exiting)", 
+     xlab = "RdNBR", 
+     ylab = "Frequency")
+par(mfrow = c(1, 1))
+```
+
+# Entering Models
+
+### Low Entering Model
+
+```{r}
+enter_fit_low <- lmer(RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID), data = enter_df_low, REML = TRUE)
+
+tab_model(enter_fit_low)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(enter_fit_low), main = "Q-Q Plot of Residuals")
+qqline(resid(enter_fit_low), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(enter_fit_low), resid(enter_fit_low),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Moderate Entering Model
+
+```{r}
+enter_fit_mod <- lmer(RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID), data = enter_df_mod, REML = TRUE)
+
+tab_model(enter_fit_mod)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(enter_fit_mod), main = "Q-Q Plot of Residuals")
+qqline(resid(enter_fit_mod), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(enter_fit_mod), resid(enter_fit_mod),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Entering Model
+
+```{r}
+enter_fit_high <- lmer(RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID), data = enter_df_high, REML = TRUE)
+
+tab_model(enter_fit_high)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(enter_fit_high), main = "Q-Q Plot of Residuals")
+qqline(resid(enter_fit_high), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(enter_fit_high), resid(enter_fit_high),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Entering Effect
+
+```{r}
+# Extract population-level predictions (averaged over random effects)
+pred_low  <- ggpredict(enter_fit_low,  terms = c("Type", "Treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod  <- ggpredict(enter_fit_mod,  terms = c("Type", "Treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high <- ggpredict(enter_fit_high, terms = c("Type", "Treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+Treated combination,
+# and relabel x-axis categories
+pred_all <- bind_rows(pred_low, pred_mod, pred_high) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all$severity <- factor(pred_all$severity, levels = c("High", "Moderate", "Low"))
+
+# Plot
+ggplot(pred_all, aes(x = x, y = predicted, group = group, shape = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+## For GSS Abstract, percent drop in severity when high severity fire enters a Treated area
+
+```{r}
+pred_high_df <- as.data.frame(pred_high)
+
+pred_high_df %>% 
+  dplyr::select(x, group, predicted, conf.low, conf.high)
+
+# Replace "entering" with whatever your non-control level of `Type` is called
+ent <- pred_high %>% filter(x == "entering")
+
+p_Untreated <- ent$predicted[ent$group == "No"]
+p_Treated   <- ent$predicted[ent$group == "Yes"]
+
+abs_drop <- p_Untreated - p_Treated                      # RdNBR units
+pct_drop <- (p_Untreated - p_Treated) / p_Untreated * 100
+c(abs_drop = abs_drop, pct_drop = pct_drop)
+```
+
+# Exiting Models
+
+### Low Exiting Model
+
+```{r}
+exit_fit_low <- lmer(RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID), data = exit_df_low, REML = TRUE)
+
+tab_model(exit_fit_low)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(exit_fit_low), main = "Q-Q Plot of Residuals")
+qqline(resid(exit_fit_low), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(exit_fit_low), resid(exit_fit_low),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Moderate Exiting Model
+
+```{r}
+exit_fit_mod <- lmer(RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID), data = exit_df_mod, REML = TRUE)
+
+tab_model(exit_fit_mod)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(exit_fit_mod), main = "Q-Q Plot of Residuals")
+qqline(resid(exit_fit_mod), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(exit_fit_mod), resid(exit_fit_mod),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Exiting Model
+
+```{r}
+exit_fit_high <- lmer(RdNBR ~ Type + Treated + (1|Incid_Name/Transect_ID), data = exit_df_high, REML = TRUE)
+
+tab_model(exit_fit_high)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(exit_fit_high), main = "Q-Q Plot of Residuals")
+qqline(resid(exit_fit_high), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(exit_fit_high), resid(exit_fit_high),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Exiting Effect
+
+```{r}
+# Extract population-level predictions (averTrt_Yeard over random effects)
+pred_low2  <- ggpredict(exit_fit_low,  terms = c("Type", "Treated")) %>%
+  mutate(severity = "Low") %>%
+  filter(!is.na(predicted))
+
+pred_mod2  <- ggpredict(exit_fit_mod,  terms = c("Type", "Treated")) %>%
+  mutate(severity = "Moderate") %>%
+  filter(!is.na(predicted))
+
+pred_high2 <- ggpredict(exit_fit_high, terms = c("Type", "Treated")) %>%
+  mutate(severity = "High") %>%
+  filter(!is.na(predicted))
+
+# Combine, drop the non-existent control+Treated combination,
+# and relabel x-axis categories
+pred_all2 <- bind_rows(pred_low2, pred_mod2, pred_high2) %>%
+  filter(!(x == "control" & group == "Yes"))
+
+pred_all2$severity <- factor(pred_all2$severity, levels = c("High", "Moderate", "Low"))
+
+pred_all2$group <- factor(pred_all2$group, levels = c("Yes", "No"))
+
+# Plot
+ggplot(pred_all2, aes(x = x, y = predicted, group = group, shape = group)) +
+  geom_point(position = position_dodge(width = 0.3), size = 3) +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.15, position = position_dodge(width = 0.3)) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(
+    x = NULL,
+    y = "Predicted RdNBR"
+  ) +
+  theme_bw(base_size = 13) +
+  theme(
+    strip.text = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
+```
+
+
