@@ -42,6 +42,7 @@ treats <- treats %>%
   st_zm(drop=TRUE, what = "ZM") %>% #drop third and forth dimension
   st_cast("MULTIPOLYGON") %>% #convert to simpler geometry 
   filter(MGT_TYPE != "Reforestation") %>%
+  filter(!ACTIVITY %in% c("Pile Fuels", "Mastication", "Manual", "Mulching", "Mechanical", "Lop and Scatter", "Chemical")) %>%
   st_make_valid(treats) %>%
   rename("geometry" = "Shape")
 
