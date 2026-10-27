@@ -42,6 +42,8 @@ vignettes/*.pdf
 data/
 # All results
 Results/
+# Knitted documents
+documents/knitted documents
 # Manuscript drafts
 Documents/Revisions/
 # Documents for submission

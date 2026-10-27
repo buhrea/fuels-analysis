@@ -18,7 +18,7 @@ knitr::opts_chunk$set(message = FALSE)
 ```
 
 So far, the only filters for site/fire selection have been selecting for fires withing the past ~15 years (2010-2024) which intersect with previous fuels reduction. Now we will impose 2 more filters:
--- Treatment Extent: The proportion of the wildfire treated must be equal to or greater than 0.1, when rounded to two decimal points. This is to improve site sampling within each fire. The proportion treated must be lower than 98% to allow for selection of controls.
+-- Treatment Extent: The proportion of the wildfire treated must be equal to or greater than 0.1, when rounded to two decimal points. This is to improve site sampling within each fire. The proportion treated must be lower than 99% to allow for selection of controls.
 -- Elevation: The minimum elevation of the fire must be greater than 1500 m. This is to exclude lower-elevation vegetation types.
 
 ```{r}
@@ -165,9 +165,9 @@ Based on Treatment extent and Elevation
 
 ```{r}
 myfires <- char_table %>%
-  filter(Proportion_Treated >= 0.1) %>% #removed 56 fires
-  filter(Proportion_Treated < 0.98) %>% #removed 7 entries
-  filter(Fire_Min_Elev > 1500) %>% #removed 9 fires 
+  filter(Proportion_Treated >= 0.1) %>% 
+  filter(Proportion_Treated < 0.98) %>% 
+  filter(Fire_Min_Elev > 1500) %>% 
   st_drop_geometry()
 
 #View the results
@@ -183,6 +183,9 @@ write.csv(myfires, "data/processed/my_fires.csv", row.names = FALSE)
 
 ```{r}
 myfiresIDs <- myfires$Event_ID
+
+inter_sub <- intersection %>% 
+  filter(Event_ID %in% myfiresIDs)
 
 #subset fires
 fires_sub <- fires %>% 

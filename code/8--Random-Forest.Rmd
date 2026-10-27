@@ -52,16 +52,16 @@ plots_500m <- filter(plots, Radius == 500)
 VIF and linear correlation
 
 ```{r correlation}
-model1 <- lm(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + Extreme + TCC + Prop_Conifer + Prop_Conifer_Hardwood + Prop_Hardwood + Prop_Shrubland, data = plots)
+model1 <- lm(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + Extreme + TCC + Prop_Conifer + Prop_Conifer_Hardwood + Prop_Hardwood, data = plots)
 
 vif(model1)
 
 # Removing Extreme in favor of Daily_Area and removing Conifer_Hardwood in favor of Conifer
-model2 <- lm(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = plots)
+model2 <- lm(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = plots)
 
 vif(model2)
 
-preds <- c("Prop_Treated", "Trt_Age", "Northness", "Elevation", "Slope", "Daily_Area", "TCC", "Prop_Conifer", "Prop_Hardwood", "Prop_Shrubland") #For use later in VIPs
+preds <- c("Prop_Treated", "Trt_Age", "Northness", "Elevation", "Slope", "Daily_Area", "TCC", "Prop_Conifer", "Prop_Hardwood") #For use later in VIPs
 ```
 
 # Proportion of High-Severity
@@ -76,7 +76,7 @@ hi100_test  <- testing(data_split_hi100)
 
 Create a recipe
 ```{r hi100-rec}
-hi100_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = hi100_train)
+hi100_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = hi100_train)
 
 hi100_prep <- prep(hi100_rec)
 ```
@@ -104,7 +104,7 @@ hi100_folds <- spatial_clustering_cv(hi100_train)
 doParallel::registerDoParallel()
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 10)),
+  mtry(range = c(1, 9)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -215,7 +215,7 @@ hi250_test  <- testing(data_split_hi250)
 
 Create a recipe
 ```{r hi250-rec}
-hi250_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = hi250_train)
+hi250_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = hi250_train)
 
 hi250_prep <- prep(hi250_rec)
 ```
@@ -244,7 +244,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 10)),
+  mtry(range = c(1, 9)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -355,7 +355,7 @@ hi500_test  <- testing(data_split_hi500)
 
 Create a recipe
 ```{r hi500-rec}
-hi500_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = hi500_train)
+hi500_rec <- recipe(Prop_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = hi500_train)
 
 hi500_prep <- prep(hi500_rec)
 ```
@@ -384,7 +384,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 10)),
+  mtry(range = c(1, 9)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -496,7 +496,7 @@ mohi100_test  <- testing(data_split_mohi100)
 
 Create a recipe
 ```{r mohi100-rec}
-mohi100_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = mohi100_train)
+mohi100_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = mohi100_train)
 
 mohi100_prep <- prep(mohi100_rec)
 ```
@@ -530,7 +530,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 10)),
+  mtry(range = c(1, 9)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -641,7 +641,7 @@ mohi250_test  <- testing(data_split_mohi250)
 
 Create a recipe
 ```{r mohi250-rec}
-mohi250_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = mohi250_train)
+mohi250_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = mohi250_train)
 
 mohi250_prep <- prep(mohi250_rec)
 ```
@@ -670,7 +670,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 10)),
+  mtry(range = c(1, 9)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -782,7 +782,7 @@ mohi500_test  <- testing(data_split_mohi500)
 
 Create a recipe
 ```{r mohi500-rec}
-mohi500_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood + Prop_Shrubland, data = mohi500_train)
+mohi500_rec <- recipe(Prop_Mod_High_Sev ~ Prop_Treated + Trt_Age + Northness + Elevation + Slope + Daily_Area + TCC + Prop_Conifer + Prop_Hardwood, data = mohi500_train)
 
 mohi500_prep <- prep(mohi500_rec)
 ```
@@ -811,7 +811,7 @@ doParallel::registerDoParallel()
 #show_notes(.Last.tune.result)
 
 rf_grid <- grid_regular(
-  mtry(range = c(1, 10)),
+  mtry(range = c(1, 9)),
   min_n(range = c(1,40)),
   levels = 5
 )
@@ -1101,7 +1101,6 @@ pd_dab_hi500 <- pdp::partial(
 Build ggplots
 ```{r int-dab}
 lims_hi   <- range(c(pd_dab_hi100$yhat,   pd_dab_hi250$yhat,   pd_dab_hi500$yhat))
-lims_mohi <- range(c(pd_dab_mohi100$yhat, pd_dab_mohi250$yhat, pd_dab_mohi500$yhat))
 
 p1 <- ggplot(pd_dab_hi100, aes(Prop_Treated, Daily_Area, fill = yhat)) +
   geom_raster() +

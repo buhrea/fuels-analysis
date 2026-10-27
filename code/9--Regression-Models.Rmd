@@ -12,7 +12,7 @@ output:
 
 ```{r setup, include=FALSE}
 library(knitr)
-knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 6, fig.height = 6, tidy = TRUE)
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 8, fig.height = 6, tidy = TRUE)
 ```
 
 1. Transects were filtered to only include broadcast burning, wildfire, or Untreated points.
@@ -63,8 +63,8 @@ transects <- st_drop_geometry(transects)
 
 ```{r, results = 'asis'}
 #Filter for only Broadcast Burning or Wildfire
-jones_df <- transects %>%
-  filter(!Trt_Type %in% c("Rearrangement", "Removal")) 
+jones_df <- transects
+#filter(!Trt_Type %in% c("Rearrangement", "Removal")) 
 ```
 
 ## Transects by Type in each Fire and Starting Severity

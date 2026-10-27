@@ -63,12 +63,20 @@ Read in Treatments
 treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
   st_make_valid() %>%
   st_transform(target_crs)
+
+treatments <- treatments %>%
+  mutate(Trt_Type = case_when(
+    MGT_TYPE == "Wildfire" ~ "Wildfire",
+    ACTIVITY %in% c("Removal", "Pile Burn") ~ "Removal",
+    ACTIVITY %in% "Broadcast Burn" ~ "Broadcast Burn"
+  ))
+
 flat <- st_union(treatments)
 ```
 
 # Plot Selection
 
-Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer). Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin (though this does not restrict selection), subject to a 1000 m minimum spacing.
+Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer). Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin, subject to a 1000 m minimum spacing between plot centers.
 
 ```{r}
 # Shrink the fires by 550m to satisfy the edge requirement
@@ -77,7 +85,7 @@ fire_interiors <- st_buffer(fires, dist = -550)
 
 # ---- Parameters ----
 radii        <- c(100, 250, 500)
-strat_radius <- 250                      # scale used to define gradient bins
+strat_radius <- 100                      # scale used to define gradient bins
 bin_breaks   <- c(-Inf, 0, 0.10, 0.25, 0.50, 0.75, 0.99, Inf)
 bin_labels   <- c("0", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
 quota        <- setNames(rep(50, length(bin_labels)), bin_labels)  # max plots per bin, per fire
@@ -86,6 +94,7 @@ n_bg         <- 500                      # candidates across the whole fire inte
 n_edge       <- 1500                     # candidates near treatment boundaries
 edge_width   <- 300                      # m on either side of a treatment boundary
 min_dist     <- 1000
+ctrl_dist    <- 2000                     # m; controls drawn within this distance of a treatment
 
 # ---- Helpers ----
 make_buffers <- function(pts, radii) {
@@ -127,8 +136,16 @@ for (i in seq_len(nrow(fire_interiors))) {
   trt_local <- st_intersection(flat, box)
   has_trt   <- length(trt_local) > 0 && !all(st_is_empty(trt_local))
 
-  # --- Candidate pool: background + points near treatment edges ---
-  pts <- st_sample(fire_geom, n_bg)
+  # --- Candidate pool: background (near treatments) + points near treatment edges ---
+  if (has_trt) {
+    ctrl_zone <- st_buffer(st_union(trt_local), ctrl_dist) %>%
+      st_intersection(fire_geom)
+    bg_zone <- if (!all(st_is_empty(ctrl_zone))) ctrl_zone else fire_geom
+  } else {
+    bg_zone <- fire_geom   # no treatments in this fire; fall back to whole interior
+  }
+  pts <- st_sample(bg_zone, n_bg)
+
   if (has_trt) {
     edge_zone <- st_buffer(st_boundary(trt_local), edge_width) %>%
       st_intersection(fire_geom)
@@ -374,7 +391,7 @@ First, filter points so that each point has a minimum of 10% forest cover prior 
 
 ```{r}
 #load points
-points <- st_read("data/processed/AllPoints/AllPoints.shp") %>%
+points <- st_read("data/processed/AllPoints/AllPoints1026.shp") %>%
   st_transform(crs(tcc))
 
 tcc <- as.numeric(tcc)
@@ -390,7 +407,9 @@ points <- points %>%
 Label each point as treated or untreated. 
 
 ```{r}
-flat <- st_union(treatments)
+burn_treated <- treatments %>%
+  filter(Trt_Type %in% c("Broadcast Burn", "Wildfire"))
+flat <- st_union(burn_treated)
 
 #label treated points
 spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
