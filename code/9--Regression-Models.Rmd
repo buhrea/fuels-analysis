@@ -15,9 +15,7 @@ library(knitr)
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.width = 8, fig.height = 6, tidy = TRUE)
 ```
 
-1. Transects were filtered to only include broadcast burning, wildfire, or Untreated points.
-
-Note: Incomplete transects (those with thinning-only points filtered out) were allowed in the dataset. 
+1. Transects were selected to only include broadcast burning and wildfire as treatments.
 
 2. Six models were constructed for different combinations of starting severity and transect Type:
 
