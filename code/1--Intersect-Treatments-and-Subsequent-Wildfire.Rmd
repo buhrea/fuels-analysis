@@ -41,8 +41,7 @@ treats <- st_read("D:/Spatial_Data/CFTv2_FINAL_DATA.gdb", layer = "CFTv2_FinalDa
 treats <- treats %>%
   st_zm(drop=TRUE, what = "ZM") %>% #drop third and forth dimension
   st_cast("MULTIPOLYGON") %>% #convert to simpler geometry 
-  filter(MGT_TYPE != "Reforestation") %>%
-  filter(!ACTIVITY %in% c("Pile Fuels", "Mastication", "Manual", "Mulching", "Mechanical", "Lop and Scatter", "Chemical")) %>%
+  filter(MGT_TYPE != "Reforestation") 
   st_make_valid(treats) %>%
   rename("geometry" = "Shape")
 
@@ -81,8 +80,12 @@ allfires <- allfires %>%
 
 ```{r}
 treats <- bind_rows(treats, allfires)
-treats <- treats %>%
+treats_all <- treats %>%
   dplyr::select("OBJECTID","MGT_TYPE", "ACTIVITY", "EVENT_NAME","YEAR_COMP")
+
+#Create a treatment dataset with just burning and removal for use in most analyses (fire selection, plots). Treats_all will be used to create separate entering/exiting regression models for different treatment types.
+treats_br <- treats_all %>%
+  filter(!ACTIVITY %in% c("Pile Fuels", "Mastication", "Manual", "Mulching", "Mechanical", "Lop and Scatter", "Chemical"))
 ```
 
 # Overlap Subsequent Wildfire with Treatments
@@ -107,8 +110,8 @@ fires <- st_read("D:/Spatial_Data/mtbs_perimeter_data/mtbs_perims_DD.shp") %>%
 ## Intersect Treatments and Subsequent Wildfires
 
 ```{r}
-# Intersect treatments and subsequent wildfires
-intersect <- st_intersection(treats, fires) %>%
+# Intersect burn/removal treatments and subsequent wildfires
+intersect_br <- st_intersection(treats_br, fires) %>%
   filter(YEAR_COMP < Fire_Year) %>% 
   dplyr::select("Event_ID", "Incid_Name", "Fire_Year", "OBJECTID", "EVENT_NAME","MGT_TYPE", "ACTIVITY", "YEAR_COMP")
 ```
@@ -118,26 +121,44 @@ intersect <- st_intersection(treats, fires) %>%
 ```{r}
 # Subset Fires to only those that intersect with prior fuel treatments
 fires <- fires %>% 
-  filter(Event_ID %in% unique(intersect%>% pull(Event_ID))) %>%
+  filter(Event_ID %in% unique(intersect_br%>% pull(Event_ID))) %>%
   dplyr::select("Event_ID", "Incid_Name", "Ig_Date", "Fire_Year")
 ```
 
 ```{r}
 # Subset treatments to only those that intersect subsequent wildfire 
-treats <- treats %>% 
-  filter(OBJECTID %in% unique(intersect%>% pull(OBJECTID)))
+treats_br <- treats_br %>% 
+  filter(OBJECTID %in% unique(intersect_br%>% pull(OBJECTID)))
+```
+
+```{r}
+#intersect and subset all treatments to only the fires which include removal/burning, which is now our fires object
+intersect_all <- st_intersection(treats_all, fires) %>%
+  filter(YEAR_COMP < Fire_Year) %>% 
+  dplyr::select("Event_ID", "Incid_Name", "Fire_Year", "OBJECTID", "EVENT_NAME","MGT_TYPE", "ACTIVITY", "YEAR_COMP")
+
+treats_all <- treats_all %>% 
+  filter(OBJECTID %in% unique(intersect_all%>% pull(OBJECTID)))
 ```
 
 # Save Geopackage
 
 ```{r}
-# Save the intersection result as the first layer
+# Save the B/R intersection result as the first layer
 st_write(
-  obj = intersect,
+  obj = intersect_br,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "intersection",
+  layer = "intersection_br",
   driver = "GPKG",
   delete_dsn = TRUE
+)
+
+# Append the subsetted All intersection as a new layer
+st_write(
+  obj = intersect_all,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "intersection_all",
+  driver = "GPKG"
 )
 
 # Append the subsetted fires as a new layer
@@ -145,17 +166,23 @@ st_write(
   obj = fires,
   dsn = "data/processed/fuels_analysis.gpkg",
   layer = "fires",
-  driver = "GPKG",
-  delete_layer= TRUE
+  driver = "GPKG"
 )
 
-# Append the subsetted treatments as a new layer
+# Append the subsetted B/R treatments as a new layer
 st_write(
-  obj = treats,
+  obj = treats_br,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "treatments",
-  driver = "GPKG",
-  delete_layer= TRUE
+  layer = "treatments_br",
+  driver = "GPKG"
+)
+
+# Append the subsetted All treatments as a new layer
+st_write(
+  obj = treats_all,
+  dsn = "data/processed/fuels_analysis.gpkg",
+  layer = "treatments_all",
+  driver = "GPKG"
 )
 ```
 
