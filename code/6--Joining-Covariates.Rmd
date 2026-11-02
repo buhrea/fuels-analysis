@@ -168,7 +168,7 @@ For Plots
 - Treatment Extent
 
 ```{r}
-treats <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
+treats <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments_all")
 
 treats <- treats %>%
   mutate(Trt_Type = case_when(
