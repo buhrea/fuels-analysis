@@ -14,7 +14,7 @@ output:
 library(knitr)
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, tidy = TRUE)
 
-set.seed(123)
+set.seed(42)
 ```
 
 # Load Packages
@@ -969,6 +969,58 @@ df_vip_mohi <- map_dfr(vip_mohi_list, as.data.frame, .id = "Scale") %>%
   )
 ```
 
+Variable Importance - RMSE
+
+```{r comb-vip}
+# --- PANEL A: High-Severity Fire VIP ---
+vip_hi_list <- list(
+  "100m"  = vip_hi100,
+  "250m" = vip_hi250,
+  "500m" = vip_hi500
+)
+
+df_vip_hi <- map_dfr(vip_hi_list, as.data.frame, .id = "Scale") %>%
+  group_by(Scale) %>%
+  mutate(full_rmse = mean(dropout_loss[variable == "_full_model_"], na.rm = TRUE)) %>%
+  ungroup() %>%
+  filter(!variable %in% c("_full_model_", "_baseline_")) %>%
+  group_by(Scale, variable) %>%
+  summarise(
+    rmse      = mean(dropout_loss, na.rm = TRUE),
+    full_rmse = first(full_rmse),
+    .groups   = "drop"
+  ) %>%
+  mutate(
+    Scale = factor(Scale, levels = c("100m", "250m", "500m")),
+    rmse_increase     = rmse - full_rmse,                       # in response units
+    rmse_increase_pct = (rmse - full_rmse) / full_rmse * 100
+  )
+
+# --- PANEL C: Moderate/High-Severity Fire VIP ---
+vip_mohi_list <- list(
+  "100m"  = vip_mohi100,
+  "250m" = vip_mohi250,
+  "500m" = vip_mohi500
+)
+
+df_vip_mohi <- map_dfr(vip_mohi_list, as.data.frame, .id = "Scale") %>%
+  group_by(Scale) %>%
+  mutate(full_rmse = mean(dropout_loss[variable == "_full_model_"], na.rm = TRUE)) %>%
+  ungroup() %>%
+  filter(!variable %in% c("_full_model_", "_baseline_")) %>%
+  group_by(Scale, variable) %>%
+  summarise(
+    rmse      = mean(dropout_loss, na.rm = TRUE),
+    full_rmse = first(full_rmse),
+    .groups   = "drop"
+  ) %>%
+  mutate(
+    Scale = factor(Scale, levels = c("100m", "250m", "500m")),
+    rmse_increase     = rmse - full_rmse,                       # in response units
+    rmse_increase_pct = (rmse - full_rmse) / full_rmse * 100
+  )
+```
+
 Partial Dependence Plot
 
 ```{r comb-pdp}
@@ -1037,7 +1089,7 @@ p_d <- ggplot(df_pdp_mohi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
   scale_color_manual(values = scale_colors) +
   scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
   labs(x = "Proportion of Area Treated", y = "p(moderate/high-severity fire)") +
-  guides(color = "none") +
+  guides(color = "none") + 
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
@@ -1053,61 +1105,9 @@ fig1 <- (p_a + p_b) / (p_c + p_d) +
 print(fig1)
 ```
 
-Variable Importance - RMSE
-
-```{r comb-vip1}
-# --- PANEL A: High-Severity Fire VIP ---
-vip_hi_list <- list(
-  "100m"  = vip_hi100,
-  "250m" = vip_hi250,
-  "500m" = vip_hi500
-)
-
-df_vip_hi <- map_dfr(vip_hi_list, as.data.frame, .id = "Scale") %>%
-  group_by(Scale) %>%
-  mutate(full_rmse = mean(dropout_loss[variable == "_full_model_"], na.rm = TRUE)) %>%
-  ungroup() %>%
-  filter(!variable %in% c("_full_model_", "_baseline_")) %>%
-  group_by(Scale, variable) %>%
-  summarise(
-    rmse      = mean(dropout_loss, na.rm = TRUE),
-    full_rmse = first(full_rmse),
-    .groups   = "drop"
-  ) %>%
-  mutate(
-    Scale = factor(Scale, levels = c("100m", "250m", "500m")),
-    rmse_increase     = rmse - full_rmse,                       # in response units
-    rmse_increase_pct = (rmse - full_rmse) / full_rmse * 100
-  )
-
-# --- PANEL C: Moderate/High-Severity Fire VIP ---
-vip_mohi_list <- list(
-  "100m"  = vip_mohi100,
-  "250m" = vip_mohi250,
-  "500m" = vip_mohi500
-)
-
-df_vip_mohi <- map_dfr(vip_mohi_list, as.data.frame, .id = "Scale") %>%
-  group_by(Scale) %>%
-  mutate(full_rmse = mean(dropout_loss[variable == "_full_model_"], na.rm = TRUE)) %>%
-  ungroup() %>%
-  filter(!variable %in% c("_full_model_", "_baseline_")) %>%
-  group_by(Scale, variable) %>%
-  summarise(
-    rmse      = mean(dropout_loss, na.rm = TRUE),
-    full_rmse = first(full_rmse),
-    .groups   = "drop"
-  ) %>%
-  mutate(
-    Scale = factor(Scale, levels = c("100m", "250m", "500m")),
-    rmse_increase     = rmse - full_rmse,                       # in response units
-    rmse_increase_pct = (rmse - full_rmse) / full_rmse * 100
-  )
-```
-
 Build ggplots - RMSE
 
-```{r comb-plot2}
+```{r comb-plot}
 # Custom color palette
 scale_colors <- c(
   "100m"  = "#0d0887",

@@ -60,31 +60,23 @@ tcc <- rast("D:/Spatial_Data/NLCD/nlcd_tcc_CONUS_1999_v2023-5_wgs84/nlcd_tcc_con
 Read in Treatments
 ```{r}
 #Collapse treatment dataset
-treatments_all <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments_all") %>%
+treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments") %>%
   st_make_valid() %>%
   st_transform(target_crs)
 
-treatments_all <- treatments_all %>%
+treatments <- treatments %>%
   mutate(Trt_Type = case_when(
     MGT_TYPE == "Wildfire" ~ "Wildfire",
     ACTIVITY %in% c("Removal", "Pile Burn") ~ "Removal",
-    ACTIVITY %in% "Broadcast Burn" ~ "Broadcast Burn",
-    ACTIVITY %in% c("Pile Fuels", "Mastication", "Manual", "Mulching", "Mechanical", "Lop and Scatter", "Chemical") ~ "Rearrangement"
+    ACTIVITY %in% "Broadcast Burn" ~ "Broadcast Burn"
   ))
+
+flat <- st_union(treatments)
 ```
 
 # Plot Selection
 
 Candidate plot centers are generated within each fire interior (excluding a 550 m edge buffer). Candidates are retained if mean TCC is at least 10% at all buffer scales, then stratified into bins of proportion treated area at the 250 m scale. Plots are selected per fire up to a fixed quota per bin, subject to a 1000 m minimum spacing between plot centers.
-
-```{r}
-#For plot selection, we will only consider the proportion treated with removal or burning
-treatments_br <- treatments_all %>%
-  filter(Trt_Type %in% c("Wildfire", "Removal", "Broadcast Burn"))
-
-flat_br <- st_union(treatments_br)
-```
-
 
 ```{r}
 # Shrink the fires by 550m to satisfy the edge requirement
@@ -141,7 +133,7 @@ for (i in seq_len(nrow(fire_interiors))) {
 
   # Treatments near this fire (padding keeps the clip edge far from the interior)
   box       <- st_as_sfc(st_bbox(st_buffer(fire_geom, 1000)))
-  trt_local <- st_intersection(flat_br, box)
+  trt_local <- st_intersection(flat, box)
   has_trt   <- length(trt_local) > 0 && !all(st_is_empty(trt_local))
 
   # --- Candidate pool: background (near treatments) + points near treatment edges ---
@@ -278,27 +270,16 @@ st_write(
 )
 ```
 
-Also update both treatment datasets so they only include treatments for these fires.
+Also update the treatment dataset so it only includes treatments for these fires.
 
 ```{r}
-treatments_all <- treatments_all %>%
+treatments <- treatments %>%
   st_filter(fires, .predicate = st_intersects)
 
 st_write(
-  obj = treatments_all,
+  obj = treatments,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "treatments_all",
-  driver = "GPKG",
-  delete_layer= TRUE
-)
-
-treatments_br <- treatments_br %>%
-  st_filter(fires, .predicate = st_intersects)
-
-st_write(
-  obj = treatments_br,
-  dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "treatments_br",
+  layer = "treatments",
   driver = "GPKG",
   delete_layer= TRUE
 )
@@ -423,17 +404,15 @@ points <- points %>%
   st_transform(target_crs)
 ```
 
-### Burning Treatments 
-
 Label each point as treated or untreated. 
 
 ```{r}
-treated_burn <- treatments_all %>%
+burn_treated <- treatments %>%
   filter(Trt_Type %in% c("Broadcast Burn", "Wildfire"))
-flat_burn <- st_union(treated_burn)
+flat <- st_union(burn_treated)
 
 #label treated points
-spiltmilk1 <- st_intersects(points, flat_burn, sparse = FALSE)
+spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
 points$is_treated <- rowSums(spiltmilk1) > 0
 ```
 
@@ -500,7 +479,7 @@ transect_pts <- pts %>%
   ungroup()
 ```
 
-Filter for Spacing:
+## Filter for Spacing
 
 Make transects into line objects and enforce spacing rules. Prioritize selecting treatment transects (entering/exiting) before controls during spacing.
 
@@ -554,7 +533,7 @@ Filter control transects to equal the number of treatment transects.
 
 ```{r}
 #First buffer treatments by 500m and remove the control transects that are too close
-treatments_buffered <- st_buffer(flat_burn, dist = 500)
+treatments_buffered <- st_buffer(flat, dist = 500)
 
   #Separate the treatment
 treated_yes <- thinned_transects %>% 
@@ -603,399 +582,14 @@ SumStatsTransects
 Add points back to transects now that they are thinned.
 
 ```{r}
-transects_burn <- transect_pts %>%
+transects_final <- transect_pts %>%
   semi_join(balanced_transects %>% st_drop_geometry(), 
             by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-  mutate(Transect_ID = paste0(substr(Incid_Name, 1, 4), "_", Transect_ID, "_", "Burn")) %>%
+  mutate(Transect_ID = paste0(substr(Incid_Name, 1, 4), "_", Transect_ID)) %>%
   rename(Type = type,
          Point_Num = Point_ID) %>%
   dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_Num, Type)
 ```
-
-### Removal Treatments
-
-Label each point as treated or untreated. 
-
-```{r}
-treated_remo <- treatments_all %>%
-  filter(Trt_Type %in% c("Removal"))
-flat_remo <- st_union(treated_remo)
-
-#label treated points
-spiltmilk2 <- st_intersects(points, flat_remo, sparse = FALSE)
-points$is_treated <- rowSums(spiltmilk2) > 0
-```
-
-Identify entering, exiting, and control transect origins.
-
-```{r}
-#identify the treatment progression transects
-valid_origins <- points %>%
-  st_drop_geometry() %>%
-  group_by(Incid_Name, Bearing) %>% 
-  arrange(ORIG_LEN, .by_group = TRUE) %>% #arrange sequentially, by length from origin within each fire along each line
-  mutate(
-    # Count how many of the NEXT 5 points are treated
-    sum_next_5 = roll_sum(as.numeric(is_treated), n = 5, align = "left", fill = NA),
-    # Get the sum of the 5 points AFTER those (points 6-10)
-    sum_after_5 = lead(sum_next_5, 5),
-    # Identify transects where all 10 points are not treated
-    sum_next_10 = roll_sum(as.numeric(is_treated), n = 10, align = "left", fill = NA)
-  ) %>%
-  filter(
-    (sum_next_5 == 5 & sum_after_5 == 0) | # 5 IN then 5 OUT
-    (sum_next_5 == 0 & sum_after_5 == 5) |  # 5 OUT then 5 IN
-    (sum_next_10 == 0) #Control
-  ) %>%
-  mutate(type = case_when(
-    sum_next_5 == 5 & sum_after_5 == 0 ~ "exiting",
-    sum_next_5 == 0 & sum_after_5 == 5 ~ "entering",
-    sum_next_10 == 0 ~ "control"
-  )) %>%
-  ungroup()
-```
-
-Filter points to only those with valid origins.
-
-```{r}
-# Order points and index within each radial
-pts <- points %>%
-  arrange(Event_ID, ORIG_FID, ORIG_SEQ) %>%
-  group_by(Event_ID, ORIG_FID) %>%
-  mutate(row = row_number()) %>%
-  ungroup()
-
-# Get the origin row index for each valid origin
-origins <- pts %>%
-  inner_join(valid_origins,
-            dplyr::select(Event_ID, ORIG_FID, ORIG_SEQ, type),
-            by = c("Event_ID", "ORIG_FID", "ORIG_SEQ")) %>%
-  dplyr::select(Event_ID, ORIG_FID, origin_row = row, type) %>%
-  st_drop_geometry()
-
-# Keep origin + next 9 points (10 total)
-transect_pts <- pts %>%
-  inner_join(
-    origins %>% mutate(origin_end = origin_row + 9),
-    by = join_by(Event_ID, ORIG_FID, between(row, origin_row, origin_end))
-  ) %>%                                              
-  group_by(Event_ID, ORIG_FID, origin_row, type) %>%
-  filter(
-    n() == 10,
-    (max(ORIG_SEQ) - min(ORIG_SEQ)) == 9,
-    n_distinct(ORIG_SEQ) == 10
-  ) %>%
-  mutate(Point_ID = row_number()) %>%
-  ungroup()
-```
-
-Filter for Spacing:
-
-Make transects into line objects and enforce spacing rules. Prioritize selecting treatment transects (entering/exiting) before controls during spacing.
-
-```{r}
-transect_pts <- transect_pts %>%
-  group_by(Event_ID, Incid_Name, ORIG_FID, origin_row, type) %>%
-  mutate(Transect_ID = cur_group_id()) %>%
-  ungroup()
-
-transect_lines <- transect_pts %>% #this takes awhile
-  arrange(Event_ID, Incid_Name, ORIG_FID, Transect_ID, ORIG_SEQ) %>%
-  group_by(Transect_ID, Event_ID, Incid_Name, ORIG_FID) %>%
-  summarize(geometry = st_cast(st_combine(geometry), "LINESTRING"),
-            type = first(type),
-            .groups = "drop") 
-
-#Treatment transects should be prioritized in selection, which can be done by ordering them first. Use type column to create treated column then arrange.
-
-transect_lines <- transect_lines %>% 
-  mutate(treatment = ifelse(type == "control", FALSE, TRUE)) %>%
-  arrange(desc(treatment))
-
-#Remove transect lines within 50m of fire perimeter to avoid effects of fire suppression
-fire_interiors2 <- st_buffer(fires, dist = -50)
-transect_lines <- transect_lines %>%
-  st_filter(fire_interiors2, .predicate = st_within)
-
-# Enforce 500m spacing between transect lines
-keep_indices <- c()
-remaining_indices <- 1:nrow(transect_lines)
-
-while (length(remaining_indices) > 0) {
-  # Pick the first (highest priority) line remaining
-  current_idx <- remaining_indices[1]
-  keep_indices <- c(keep_indices, current_idx)
-  
-  # Find all lines within 500m of this line
-  too_close <- st_is_within_distance(transect_lines[current_idx, ], 
-                                    transect_lines[remaining_indices, ], 
-                                    dist = 500)[[1]]
-  
-  # Remove the current line and all "too close" lines from the pool
-  remaining_indices <- remaining_indices[-too_close]
-}
-
-# Filter the original dataset
-thinned_transects <- transect_lines[keep_indices, ]
-```
-
-Filter control transects to equal the number of treatment transects.
-
-```{r}
-#First buffer treatments by 500m and remove the control transects that are too close
-treatments_buffered <- st_buffer(flat_remo, dist = 500)
-
-  #Separate the treatment
-treated_yes <- thinned_transects %>% 
-  filter(treatment == TRUE)
-
-  #Filter the FALSE rows (only keep if NOT within treatments_buffered)
-treated_no_filtered <- thinned_transects %>% 
-  filter(treatment == FALSE) %>%
-  # st_filter keeps what intersects; we use st_disjoint to avoid this
-  st_filter(treatments_buffered, .predicate = st_disjoint)
-
-  #Combine them back into one object
-thinned_transects <- bind_rows(treated_yes, treated_no_filtered)
-
-#Randomly select control transects to equal the number of treatment transects
-
-balanced_transects <- thinned_transects %>%
-  # 1. Group by the fire ID and the treatment status
-  group_by(Event_ID) %>%
-  group_modify(~ {
-    # Count how many treatment transects exist in this specific fire
-    n_treated <- round(sum(.x$treatment == TRUE)/2)
-    
-    # Separate the treated and control groups for this fire
-    treated_rows <- .x %>% filter(treatment == TRUE)
-    control_rows <- .x %>% filter(treatment == FALSE)
-    
-    # 2. Randomly sample from controls to match n_treated
-    # Use pmin to avoid errors if a fire has fewer controls than treated lines
-    sampled_controls <- control_rows %>%
-      slice_sample(n = pmin(nrow(control_rows), n_treated))
-    
-    # 3. Combine them back for this fire
-    bind_rows(treated_rows, sampled_controls)
-  }) %>%
-  ungroup()
-
-SumStatsTransects <- balanced_transects %>%
-  arrange(Incid_Name) %>%
-  group_by(Incid_Name, type) %>%
-  summarize(n = n()) %>%
-  st_drop_geometry()
-SumStatsTransects
-```
-
-Add points back to transects now that they are thinned.
-
-```{r}
-transects_remo <- transect_pts %>%
-  semi_join(balanced_transects %>% st_drop_geometry(), 
-            by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-  mutate(Transect_ID = paste0(substr(Incid_Name, 1, 4), "_", Transect_ID, "_", "Remo")) %>%
-  rename(Type = type,
-         Point_Num = Point_ID) %>%
-  dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_Num, Type)
-```
-
-### Rearrangement Treatments
-
-Label each point as treated or untreated. 
-
-```{r}
-treated_rear <- treatments_all %>%
-  filter(Trt_Type %in% c("Rearrangement"))
-flat_rear <- st_union(treated_rear)
-
-#label treated points
-spiltmilk3 <- st_intersects(points, flat_rear, sparse = FALSE)
-points$is_treated <- rowSums(spiltmilk3) > 0
-```
-
-Identify entering, exiting, and control transect origins.
-
-```{r}
-#identify the treatment progression transects
-valid_origins <- points %>%
-  st_drop_geometry() %>%
-  group_by(Incid_Name, Bearing) %>% 
-  arrange(ORIG_LEN, .by_group = TRUE) %>% #arrange sequentially, by length from origin within each fire along each line
-  mutate(
-    # Count how many of the NEXT 5 points are treated
-    sum_next_5 = roll_sum(as.numeric(is_treated), n = 5, align = "left", fill = NA),
-    # Get the sum of the 5 points AFTER those (points 6-10)
-    sum_after_5 = lead(sum_next_5, 5),
-    # Identify transects where all 10 points are not treated
-    sum_next_10 = roll_sum(as.numeric(is_treated), n = 10, align = "left", fill = NA)
-  ) %>%
-  filter(
-    (sum_next_5 == 5 & sum_after_5 == 0) | # 5 IN then 5 OUT
-    (sum_next_5 == 0 & sum_after_5 == 5) |  # 5 OUT then 5 IN
-    (sum_next_10 == 0) #Control
-  ) %>%
-  mutate(type = case_when(
-    sum_next_5 == 5 & sum_after_5 == 0 ~ "exiting",
-    sum_next_5 == 0 & sum_after_5 == 5 ~ "entering",
-    sum_next_10 == 0 ~ "control"
-  )) %>%
-  ungroup()
-```
-
-Filter points to only those with valid origins.
-
-```{r}
-# Order points and index within each radial
-pts <- points %>%
-  arrange(Event_ID, ORIG_FID, ORIG_SEQ) %>%
-  group_by(Event_ID, ORIG_FID) %>%
-  mutate(row = row_number()) %>%
-  ungroup()
-
-# Get the origin row index for each valid origin
-origins <- pts %>%
-  inner_join(valid_origins,
-            dplyr::select(Event_ID, ORIG_FID, ORIG_SEQ, type),
-            by = c("Event_ID", "ORIG_FID", "ORIG_SEQ")) %>%
-  dplyr::select(Event_ID, ORIG_FID, origin_row = row, type) %>%
-  st_drop_geometry()
-
-# Keep origin + next 9 points (10 total)
-transect_pts <- pts %>%
-  inner_join(
-    origins %>% mutate(origin_end = origin_row + 9),
-    by = join_by(Event_ID, ORIG_FID, between(row, origin_row, origin_end))
-  ) %>%                                              
-  group_by(Event_ID, ORIG_FID, origin_row, type) %>%
-  filter(
-    n() == 10,
-    (max(ORIG_SEQ) - min(ORIG_SEQ)) == 9,
-    n_distinct(ORIG_SEQ) == 10
-  ) %>%
-  mutate(Point_ID = row_number()) %>%
-  ungroup()
-```
-
-Filter for Spacing:
-
-Make transects into line objects and enforce spacing rules. Prioritize selecting treatment transects (entering/exiting) before controls during spacing.
-
-```{r}
-transect_pts <- transect_pts %>%
-  group_by(Event_ID, Incid_Name, ORIG_FID, origin_row, type) %>%
-  mutate(Transect_ID = cur_group_id()) %>%
-  ungroup()
-
-transect_lines <- transect_pts %>% #this takes awhile
-  arrange(Event_ID, Incid_Name, ORIG_FID, Transect_ID, ORIG_SEQ) %>%
-  group_by(Transect_ID, Event_ID, Incid_Name, ORIG_FID) %>%
-  summarize(geometry = st_cast(st_combine(geometry), "LINESTRING"),
-            type = first(type),
-            .groups = "drop") 
-
-#Treatment transects should be prioritized in selection, which can be done by ordering them first. Use type column to create treated column then arrange.
-
-transect_lines <- transect_lines %>% 
-  mutate(treatment = ifelse(type == "control", FALSE, TRUE)) %>%
-  arrange(desc(treatment))
-
-#Remove transect lines within 50m of fire perimeter to avoid effects of fire suppression
-fire_interiors2 <- st_buffer(fires, dist = -50)
-transect_lines <- transect_lines %>%
-  st_filter(fire_interiors2, .predicate = st_within)
-
-# Enforce 500m spacing between transect lines
-keep_indices <- c()
-remaining_indices <- 1:nrow(transect_lines)
-
-while (length(remaining_indices) > 0) {
-  # Pick the first (highest priority) line remaining
-  current_idx <- remaining_indices[1]
-  keep_indices <- c(keep_indices, current_idx)
-  
-  # Find all lines within 500m of this line
-  too_close <- st_is_within_distance(transect_lines[current_idx, ], 
-                                    transect_lines[remaining_indices, ], 
-                                    dist = 500)[[1]]
-  
-  # Remove the current line and all "too close" lines from the pool
-  remaining_indices <- remaining_indices[-too_close]
-}
-
-# Filter the original dataset
-thinned_transects <- transect_lines[keep_indices, ]
-```
-
-Filter control transects to equal the number of treatment transects.
-
-```{r}
-#First buffer treatments by 500m and remove the control transects that are too close
-treatments_buffered <- st_buffer(flat_rear, dist = 500)
-
-  #Separate the treatment
-treated_yes <- thinned_transects %>% 
-  filter(treatment == TRUE)
-
-  #Filter the FALSE rows (only keep if NOT within treatments_buffered)
-treated_no_filtered <- thinned_transects %>% 
-  filter(treatment == FALSE) %>%
-  # st_filter keeps what intersects; we use st_disjoint to avoid this
-  st_filter(treatments_buffered, .predicate = st_disjoint)
-
-  #Combine them back into one object
-thinned_transects <- bind_rows(treated_yes, treated_no_filtered)
-
-#Randomly select control transects to equal the number of treatment transects
-
-balanced_transects <- thinned_transects %>%
-  # 1. Group by the fire ID and the treatment status
-  group_by(Event_ID) %>%
-  group_modify(~ {
-    # Count how many treatment transects exist in this specific fire
-    n_treated <- round(sum(.x$treatment == TRUE)/2)
-    
-    # Separate the treated and control groups for this fire
-    treated_rows <- .x %>% filter(treatment == TRUE)
-    control_rows <- .x %>% filter(treatment == FALSE)
-    
-    # 2. Randomly sample from controls to match n_treated
-    # Use pmin to avoid errors if a fire has fewer controls than treated lines
-    sampled_controls <- control_rows %>%
-      slice_sample(n = pmin(nrow(control_rows), n_treated))
-    
-    # 3. Combine them back for this fire
-    bind_rows(treated_rows, sampled_controls)
-  }) %>%
-  ungroup()
-
-SumStatsTransects <- balanced_transects %>%
-  arrange(Incid_Name) %>%
-  group_by(Incid_Name, type) %>%
-  summarize(n = n()) %>%
-  st_drop_geometry()
-SumStatsTransects
-```
-
-Add points back to transects now that they are thinned.
-
-```{r}
-transects_rear <- transect_pts %>%
-  semi_join(balanced_transects %>% st_drop_geometry(), 
-            by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-  mutate(Transect_ID = paste0(substr(Incid_Name, 1, 4), "_", Transect_ID, "_", "Rear")) %>%
-  rename(Type = type,
-         Point_Num = Point_ID) %>%
-  dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_Num, Type)
-```
-
-## Merge 3 Transect Datasets
-
-```{r}
-transects_final <- bind_rows(transects_burn, transects_remo, transects_rear)
-```
-
 
 ## Save object in GPKG
 
@@ -1007,101 +601,5 @@ st_write(
   driver = "GPKG",
   delete_layer= TRUE
 )
-```
-
-# Test: Updated Transect Selection
-
-```{r}
-# Treatment groups (suffix = dataset name)
-specs <- list(
-  Burn = c("Broadcast Burn", "Wildfire"),
-  Remo = "Removal",
-  Rear = "Rearrangement"
-)
-
-flat_by_type <- purrr::map(specs, ~ treatments_all %>%
-                             filter(Trt_Type %in% .x) %>%
-                             st_union())
-flat_all <- treatments_all %>%
-  filter(Trt_Type %in% unlist(specs)) %>%
-  st_union()
-
-# Treated candidates, one set per dataset
-cand_trt <- purrr::imap(
-  flat_by_type,
-  ~ get_candidates(points, .x, c("entering", "exiting"), .y, fires)
-)
-
-# Control candidates: untreated by ANY type, and >500 m from ANY treatment
-cand_ctrl <- get_candidates(points, flat_all, "control", "Ctrl", fires)
-ctrl_lines <- cand_ctrl$lines %>%
-  st_filter(st_buffer(flat_all, dist = 500), .predicate = st_disjoint)
-```
-
-```{r}
-select_dataset <- function(trt, ctrl_lines, ctrl_pts, suffix, spacing = 500) {
-
-  # Treated first so they win during spacing
-  lines <- bind_rows(
-    mutate(trt$lines, treatment = TRUE),
-    mutate(ctrl_lines, treatment = FALSE)
-  )
-
-  # Spacing within this dataset only
-  keep <- c()
-  remaining <- seq_len(nrow(lines))
-  while (length(remaining) > 0) {
-    cur <- remaining[1]
-    keep <- c(keep, cur)
-    too_close <- st_is_within_distance(lines[cur, ],
-                                       lines[remaining, ],
-                                       dist = spacing)[[1]]
-    remaining <- remaining[-too_close]
-  }
-  thinned <- lines[keep, ]
-
-  # Balance controls to treated within each fire
-  balanced <- thinned %>%
-    group_by(Event_ID) %>%
-    group_modify(~ {
-      n_treated <- round(sum(.x$treatment) / 2)
-      trt_rows  <- filter(.x, treatment)
-      ctl_rows  <- filter(.x, !treatment)
-      bind_rows(trt_rows, slice_sample(ctl_rows, n = pmin(nrow(ctl_rows), n_treated)))
-    }) %>%
-    ungroup()
-
-  # Points back onto selected transects, with dataset-specific IDs
-  bind_rows(trt$pts, ctrl_pts) %>%
-    semi_join(st_drop_geometry(balanced), by = c("Event_ID", "ORIG_FID", "Transect_ID")) %>%
-    mutate(key = Transect_ID) %>%
-    group_by(key) %>%
-    mutate(num = cur_group_id()) %>%
-    ungroup() %>%
-    mutate(Transect_ID = paste0(substr(Incid_Name, 1, 4), "_", num, "_", suffix)) %>%
-    rename(Type = type, Point_Num = Point_ID) %>%
-    dplyr::select(Event_ID, Incid_Name, Fire_Year, Transect_ID, Point_Num, Type)
-}
-
-set.seed(42)
-transects_by_type <- purrr::imap(
-  cand_trt,
-  ~ select_dataset(.x, ctrl_lines, cand_ctrl$pts, suffix = .y)
-)
-
-# Summary per dataset
-purrr::imap(transects_by_type, ~ .x %>%
-              st_drop_geometry() %>%
-              distinct(Incid_Name, Transect_ID, Type) %>%
-              count(Incid_Name, Type) %>%
-              mutate(dataset = .y))
-
-transects_final <- bind_rows(transects_by_type)
-
-st_write(transects_final,
-         dsn = "data/processed/fuels_analysis.gpkg",
-         layer = "transects_selected",
-         driver = "GPKG",
-         delete_layer = TRUE)
 ```
 
