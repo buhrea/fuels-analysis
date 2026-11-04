@@ -32,14 +32,9 @@ library(here)
 # Load My GeoPackage
 
 ```{r}
-#For selecting fires, we will use the burn/removal dataset
-intersection <- st_read("data/processed/fuels_analysis.gpkg", layer = "intersection_br")
+intersection <- st_read("data/processed/fuels_analysis.gpkg", layer = "intersection")
 fires <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires")
-treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments_br")
-
-#We will filter our full treatments dataset to only include our selected fires at the end
-intersection_all <- st_read("data/processed/fuels_analysis.gpkg", layer = "intersection_all")
-treatments_all <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments_all")
+treatments <- st_read("data/processed/fuels_analysis.gpkg", layer = "treatments")
 ```
 
 # Find Values for Each Fire
@@ -199,15 +194,6 @@ fires_sub <- fires %>%
 #subset the treatments
 treat_sub <- treatments %>%
   filter(OBJECTID %in% inter_sub$OBJECTID)
-
-# Filter All Treatments Dataset to reflect selection
-#subset the intersection
-inter_all <- intersection_all %>% 
-  filter(Event_ID %in% myfiresIDs)
-
-#subset the treatments
-treat_all <- treatments_all %>%
-  filter(OBJECTID %in% inter_all$OBJECTID)
 ```
 
 Save new geopackage
@@ -219,23 +205,14 @@ st_write(
   dsn = "data/processed/fuels_analysis.gpkg",
   layer = "fires",
   driver = "GPKG",
-  delete_layer = TRUE
+  delete_dsn = TRUE
 )
 
 # copy over my treatments layer
 st_write(
   obj = treat_sub,
   dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "treatments_br",
-  driver = "GPKG",
-  delete_layer= TRUE
-)
-
-#copy over all treatments layer
-st_write(
-  obj = treat_all,
-  dsn = "data/processed/fuels_analysis.gpkg",
-  layer = "treatments_all",
+  layer = "treatments",
   driver = "GPKG",
   delete_layer= TRUE
 )
