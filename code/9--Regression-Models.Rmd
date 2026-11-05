@@ -55,14 +55,15 @@ transects$Treated <- factor(ifelse(transects$Trt_Type == "Untreated", "No", "Yes
 
 #Drop geometry
 transects <- st_drop_geometry(transects)
+set.seed(42)
 ```
 
 # Jones Dataset
 
 ```{r, results = 'asis'}
 #Filter for only Broadcast Burning or Wildfire
-jones_df <- transects
-#filter(!Trt_Type %in% c("Rearrangement", "Removal")) 
+jones_df <- transects %>%
+  filter(!Trt_Type %in% c("Rearrangement")) 
 ```
 
 ## Transects by Type in each Fire and Starting Severity
