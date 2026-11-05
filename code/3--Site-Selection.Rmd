@@ -87,7 +87,7 @@ fire_interiors <- st_buffer(fires, dist = -550)
 radii        <- c(100, 250, 500)
 strat_radius <- 100                      # scale used to define gradient bins
 bin_breaks   <- c(-Inf, 0, 0.10, 0.25, 0.50, 0.75, 0.99, Inf)
-bin_labels   <- c("0", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
+bin_labels   <- c("0%", "0-10%", "10-25%", "25-50%", "50-75%", "75-99%", "100%")
 quota        <- setNames(rep(50, length(bin_labels)), bin_labels)  # max plots per bin, per fire
 quota["0"]   <- 50
 n_bg         <- 500                      # candidates across the whole fire interior
@@ -116,7 +116,6 @@ add_prop_treated <- function(bufs, trt) {
 }
 
 # ---- Per-fire loop ----
-set.seed(42)
 final_points_list  <- vector("list", nrow(fire_interiors))
 final_buffers_list <- vector("list", nrow(fire_interiors))
 
@@ -409,10 +408,10 @@ Label each point as treated or untreated.
 ```{r}
 burn_treated <- treatments %>%
   filter(Trt_Type %in% c("Broadcast Burn", "Wildfire"))
-flat <- st_union(burn_treated)
+flat_br <- st_union(burn_treated)
 
 #label treated points
-spiltmilk1 <- st_intersects(points, flat, sparse = FALSE)
+spiltmilk1 <- st_intersects(points, flat_br, sparse = FALSE)
 points$is_treated <- rowSums(spiltmilk1) > 0
 ```
 
@@ -532,18 +531,19 @@ thinned_transects <- transect_lines[keep_indices, ]
 Filter control transects to equal the number of treatment transects.
 
 ```{r}
-#First buffer treatments by 500m and remove the control transects that are too close
-treatments_buffered <- st_buffer(flat, dist = 500)
+# Buffer treatments at both distances
+treatments_buffered_500  <- st_buffer(flat, dist = 500)
+treatments_buffered_2500 <- st_buffer(flat, dist = 2000)
 
-  #Separate the treatment
+# Treated transects stay as they are
 treated_yes <- thinned_transects %>% 
   filter(treatment == TRUE)
 
-  #Filter the FALSE rows (only keep if NOT within treatments_buffered)
+# Controls: >500 m AND <=2500 m from any treatment
 treated_no_filtered <- thinned_transects %>% 
   filter(treatment == FALSE) %>%
-  # st_filter keeps what intersects; we use st_disjoint to avoid this
-  st_filter(treatments_buffered, .predicate = st_disjoint)
+  st_filter(treatments_buffered_500,  .predicate = st_disjoint) %>%  # not within 500 m
+  st_filter(treatments_buffered_2500, .predicate = st_intersects)    # within 2500 m
 
   #Combine them back into one object
 thinned_transects <- bind_rows(treated_yes, treated_no_filtered)
@@ -555,7 +555,7 @@ balanced_transects <- thinned_transects %>%
   group_by(Event_ID) %>%
   group_modify(~ {
     # Count how many treatment transects exist in this specific fire
-    n_treated <- round(sum(.x$treatment == TRUE)/2)
+    n_treated <- round(sum(.x$treatment == TRUE))
     
     # Separate the treated and control groups for this fire
     treated_rows <- .x %>% filter(treatment == TRUE)
