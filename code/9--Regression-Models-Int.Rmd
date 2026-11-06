@@ -1,0 +1,223 @@
+---
+title: "Test Point Number Interaction"
+author: "Elizabeth Buhr"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Entering Models
+
+### Low Entering Model
+
+```{r}
+enter_fit_low <- lmer(RdNBR ~ Type * Point_Num + (1|Incid_Name/Transect_ID), data = enter_df_low, REML = TRUE)
+
+tab_model(enter_fit_low)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(enter_fit_low), main = "Q-Q Plot of Residuals")
+qqline(resid(enter_fit_low), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(enter_fit_low), resid(enter_fit_low),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1))
+```
+
+### Moderate Entering Model
+
+```{r}
+enter_fit_mod <- lmer(RdNBR ~ Type * Point_Num + (1|Incid_Name/Transect_ID), data = enter_df_mod, REML = TRUE)
+
+tab_model(enter_fit_mod)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(enter_fit_mod), main = "Q-Q Plot of Residuals")
+qqline(resid(enter_fit_mod), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(enter_fit_mod), resid(enter_fit_mod),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### High Entering Model
+
+```{r}
+enter_fit_high <- lmer(RdNBR ~ Type * Point_Num + (1|Incid_Name/Transect_ID), data = enter_df_high, REML = TRUE)
+
+tab_model(enter_fit_high)
+
+# Residual diagnostic plots for m1
+par(mfrow = c(1, 2))
+
+# Q-Q plot
+qqnorm(resid(enter_fit_high), main = "Q-Q Plot of Residuals")
+qqline(resid(enter_fit_high), col = "red")
+
+# Residuals vs Fitted
+plot(fitted(enter_fit_high), resid(enter_fit_high),
+     xlab = "Fitted Values",
+     ylab = "Residuals",
+     main = "Residuals vs Fitted")
+abline(h = 0, col = "red", lty = 2)
+
+par(mfrow = c(1, 1)) 
+```
+
+### Entering Effect
+
+##Try a Figure with Point_Num
+
+```{r}
+# Predictions across all 10 points, for control vs entering
+get_pred <- function(fit, sev) {
+  ggpredict(fit, terms = c("Point_Num", "Type")) %>%
+    as_tibble() %>%
+    mutate(severity = sev,
+           x = as.numeric(as.character(x)))
+}
+
+pred_pts <- bind_rows(
+  get_pred(enter_fit_low,  "Low"),
+  get_pred(enter_fit_mod,  "Moderate"),
+  get_pred(enter_fit_high, "High")
+) %>%
+  filter(!is.na(predicted)) %>%
+  mutate(severity = factor(severity, levels = c("High", "Moderate", "Low")))
+
+# x-axis labels: point number, plus distance into treatment for points 6-10
+x_labs <- c("-250 to -201", "-200 to -149", "-150 to -101", "-100 to -51", "-50 to -1", "1 to 50", "51 to 100", "101 to 150", "151 to 200", "201 to 250")
+
+get_diff <- function(fit, sev) {
+  emm <- emmeans::emmeans(fit, ~ Type | Point_Num)
+  emmeans::contrast(emm, method = "revpairwise") %>%   # entering - control
+    confint() %>%
+    as_tibble() %>%
+    mutate(severity  = sev,
+           Point_Num = as.numeric(as.character(Point_Num)))
+}
+
+diff_all <- bind_rows(
+  get_diff(enter_fit_low,  "Low"),
+  get_diff(enter_fit_mod,  "Moderate"),
+  get_diff(enter_fit_high, "High")
+) %>%
+  mutate(severity = factor(severity, levels = c("High", "Moderate", "Low")),
+         Zone = if_else(Point_Num <= 5, "Outside Treatment", "Inside Treatment")) 
+
+# Annotation data: High facet only, with matching factor levels
+high_df <- data.frame(
+  severity = factor("High", levels = levels(diff_all$severity))
+)
+
+ggplot(diff_all, aes(x = Point_Num, y = estimate)) +
+  # Background highlight for the treatment zone
+  annotate("rect", xmin = 5.5, xmax = 10.5, ymin = -Inf, ymax = Inf,
+           alpha = 0.08, fill = "blue") +
+
+  # Reference lines
+  geom_hline(yintercept = 0, linetype = "dashed") +
+
+  # Main plot layers
+  geom_errorbar(aes(ymin = lower.CL, ymax = upper.CL),
+                width = 0.2, linewidth = 0.6) +
+  geom_line(linewidth = 0.5) +
+  geom_point(size = 3) +
+
+  # --- High facet only: Treatment Edge label & arrow ---
+  geom_text(data = high_df,
+            aes(x = 8, y = 225, label = "Treatment \nEdge"),
+            size = 4, color = "blue", inherit.aes = FALSE) +
+  geom_segment(data = high_df,
+               aes(x = 7, y = 200, xend = 5.5, yend = 120),
+               arrow = arrow(length = unit(0.15, "cm"), type = "closed"),
+               color = "blue", linewidth = 0.5, inherit.aes = FALSE) +
+
+  # Scales & Facets
+  scale_x_continuous(breaks = 1:10) +
+  facet_wrap(~severity, nrow = 1) +
+
+  # Labels & Theme
+  labs(x = "Point Number",
+       y = "RdNBR Difference (Entering - Control)") +
+  theme_bw(base_size = 13) +
+  theme(strip.text = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
+```
+
+# Predicted values by type 
+
+```{r}
+# Annotation data: High facet only, with matching factor levels
+high_df <- data.frame(
+  severity = factor("High", levels = levels(pred_pts$severity))
+)
+
+# Place the label and arrow above the data (y values are now raw RdNBR, not differences)
+y_max <- max(pred_pts$conf.high)
+y_min <- min(pred_pts$conf.low)
+y_rng <- y_max - y_min
+
+dodge <- position_dodge(width = 0.4)
+
+ggplot(pred_pts, aes(x = x, y = predicted, color = group, shape = group, group = group)) +
+
+  # Main plot layers
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high),
+                width = 0.2, linewidth = 0.6, position = dodge) +
+  geom_line(linewidth = 0.5, position = dodge) +
+  geom_point(size = 3, position = dodge) +
+
+  # Scales & Facets
+  scale_color_manual(values = c(control = "grey", entering = "darkblue")) +
+  scale_x_continuous(breaks = 1:10) +
+  facet_wrap(~severity, nrow = 1) +
+
+  # Labels & Theme
+  labs(x = "Point Number",
+       y = "Predicted RdNBR",
+       color = "Type", shape = "Type") +
+  theme_bw(base_size = 13) +
+  theme(strip.text = element_text(face = "bold"),
+        panel.grid.minor = element_blank(),
+        legend.position = "top")
+```
+
+```{r}
+# Use whatever the factor is called in your models (Point_F, or Point_Num if you converted it in place)
+pt_var <- "Point_Num"
+
+get_pred <- function(fit, sev) {
+  ggpredict(fit, terms = c(pt_var, "Type")) %>%
+    as_tibble() %>%
+    mutate(severity = sev,
+           x = as.numeric(as.character(x)))   # factor levels -> numeric
+}
+
+pred_pts <- bind_rows(
+  get_pred(enter_fit_low,  "Low"),
+  get_pred(enter_fit_mod,  "Moderate"),
+  get_pred(enter_fit_high, "High")
+) %>%
+  filter(!is.na(predicted)) %>%
+  mutate(severity = factor(severity, levels = c("High", "Moderate", "Low")))
+```
+
