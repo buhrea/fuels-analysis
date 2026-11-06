@@ -28,11 +28,13 @@ library(tidymodels)
 library(DALEXtra) #Explainer (variable importance, partial dependence, etc)
 library(spatialsample) #Use for spatial cross validation
 library(car) #VIF function
+library(segmented) # break point analysis
 library(pdp) #for use in heatmaps
 library(patchwork) #Combine final figures
 
 conflicted::conflicts_prefer(yardstick::rmse)
 conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::select)
 ```
 
 # Load Data
@@ -917,6 +919,7 @@ plot(pdp_mohi500)
 
 ## Combined Multi-Scale VIP and PDPs
 
+### MSE %
 Variable Importance - Increase in MSE
 
 ```{r comb-vip}
@@ -1046,12 +1049,15 @@ fig1 <- (p_a + p_b) / (p_c + p_d) +
   plot_annotation(tag_levels = "a") &
   theme(
     plot.tag = element_text(face = "bold", size = 14),
+    axis.text = element_text(size = 28),
     legend.position = "right"
   )
 
 # Display final figure
 print(fig1)
 ```
+
+### RMSE %
 
 Variable Importance - RMSE
 
@@ -1110,58 +1116,102 @@ Build ggplots - RMSE
 ```{r comb-plot2}
 # Custom color palette
 scale_colors <- c(
-  "100m"  = "#0d0887",
-  "250m" = "#cc4678",
-  "500m" = "#f0f921"
+  "100m"  = "#FFE135",
+  "250m" = "#E60026",
+  "500m" = "#0070FF"
+)
+
+scale_color_radius <- scale_color_manual(
+  values = scale_colors,
+  labels = c("100", "250", "500"),
+  name   = "Radius (m)",
+  guide  = guide_legend(
+    override.aes   = list(size = 8),
+    title.position = "top",
+    title.hjust    = 0.1
+  ))
+
+var_labels <- c(
+  "Daily_Area" = "Daily Area Burned",
+  "Elevation" = "Elevation",
+  "Northness" = "Northness",
+  "Prop_Conifer" = "Prop. Conifer",
+  "Prop_Hardwood" = "Prop. Hardwood",
+  "Prop_Treated" = "Prop. Treated",
+  "Slope" = "Slope",
+  "TCC" = "Pre-Treatment TCC",
+  "Trt_Age" = "Treatment Age"
 )
 
 # --- Plot A: VIP High Severity ---
-p_a <- ggplot(df_vip_hi, aes(x = rmse_increase, y = reorder(variable, rmse_increase), color = Scale)) +
-  geom_point(size = 2.5) +
-  scale_color_manual(values = scale_colors) +
+p_a <- ggplot(df_vip_hi, aes(x = rmse_increase_pct, y = reorder(variable, rmse_increase_pct), color = Scale)) +
+  geom_point(size = 6, alpha = 0.8) +
+  scale_color_radius +
+  scale_y_discrete(labels = var_labels) +
   labs(x = NULL, y = NULL) +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 
 # --- Plot B: PDP High Severity ---
 p_b <- ggplot(df_pdp_hi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
-  geom_line(linewidth = 1) +
+  geom_line(linewidth = 2) +
   scale_color_manual(values = scale_colors) +
   scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
-  labs(x = NULL, y = "p(high-severity fire)") +
+  labs(x = NULL, y = "Prop. High-Severity Fire") +
   guides(color = "none") +
   theme_bw() +
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank(),
+        axis.title.y = element_text(size = 28))
 
 # --- Plot C: VIP Moderate/High Severity ---
-p_c <- ggplot(df_vip_mohi, aes(x = rmse_increase, y = reorder(variable, rmse_increase), color = Scale)) +
-  geom_point(size = 2.5) +
-  scale_color_manual(values = scale_colors) +
+p_c <- ggplot(df_vip_mohi, aes(x = rmse_increase_pct, y = reorder(variable, rmse_increase_pct), color = Scale)) +
+  geom_point(size = 6, alpha = 0.8) +
+  scale_color_radius +
+  scale_y_discrete(labels = var_labels) +
   labs(x = "Increase in RMSE (%)", y = NULL) +
   theme_bw() +
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank(),
+        axis.title.x = element_text(size = 28))
 
 # --- Plot D: PDP Moderate/High Severity ---
 p_d <- ggplot(df_pdp_mohi, aes(x = `_x_`, y = `_yhat_`, color = Scale)) +
-  geom_line(linewidth = 1) +
+  geom_line(linewidth = 2) +
   scale_color_manual(values = scale_colors) +
   scale_x_continuous(labels = scales::number_format(accuracy = 0.01)) +
-  labs(x = "Proportion of Area Treated", y = "p(moderate/high-severity fire)") +
+  labs(x = "Proportion of Area Treated", y = "Prop. Mod/High-Severity Fire") +
   guides(color = "none") + 
   theme_bw() +
-  theme(panel.grid.minor = element_blank())
+  theme(panel.grid.minor = element_blank(),
+        axis.title.x = element_text(size = 28),
+        axis.title.y = element_text(size = 28))
 
 fig1 <- (p_a + p_b) / (p_c + p_d) +
   plot_layout(guides = "collect") +
   plot_annotation(tag_levels = "a") &
   theme(
-    plot.tag = element_text(face = "bold", size = 14),
-    legend.position = "right"
+    plot.tag = element_text(face = "bold", size = 32),
+    axis.text = element_text(size = 28),
+    legend.position = "right",
+    legend.title    = element_text(size = 28),
+    legend.text     = element_text(size = 28),
+    legend.key.size = unit(2, "cm"), 
+    legend.box.spacing = unit(1, "cm")
   )
 
 # Display final figure
 print(fig1)
+
+ggsave(
+  filename = "documents/figures/VIP_PDP.png",
+  plot     = fig1,
+  width    = 20,
+  height   = 14,
+  units    = "in",
+  dpi      = 300
+)
 ```
+
+### RMSE Raw
 
 Vip plots - rmse updated
 ```{r}
@@ -1327,7 +1377,7 @@ p1 <- ggplot(pd_dab_hi100, aes(Prop_Treated, Daily_Area, fill = yhat)) +
 p2 <- ggplot(pd_dab_hi250, aes(Prop_Treated, Daily_Area, fill = yhat)) +
   geom_raster() +
   scale_fill_viridis_c(limits = lims_hi, na.value = "transparent") +
-  labs(title = "250m", x = NULL, y = NULL) +
+  labs(title = "250m", x = "Proportion Treated", y = NULL) +
   guides(fill = "none") +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
@@ -1346,6 +1396,15 @@ row_hi   <- (p1 + p2 + p3) + plot_layout(guides = "collect")
 fig3 <- row_hi &
   theme(plot.tag = element_text(face = "bold", size = 14))
 fig3
+
+ggsave(
+  filename = "documents/figures/Interaction.png",
+  plot     = fig3,
+  width    = 10,
+  height   = 4,
+  units    = "in",
+  dpi      = 300
+)
 ```
 
 # Average reduction in percent area burned at high severity between 0 and 1 treated area

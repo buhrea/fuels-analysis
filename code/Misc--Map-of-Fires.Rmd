@@ -9,33 +9,69 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Make a map of fires across Colorado
-
 ```{r}
 library(sf)
 library(tidyverse)
 library(terra)
+library(showtext) # access Times New Roman
 library(shadowtext)
 library(tidyterra)
+library(gridExtra) # Combine map and table
+library(patchwork) # Combine map and table
+library(grid) # Resizing figures
+library(ragg) # Sizing
+```
 
-fires_sub <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires")
+Install Times New Roman
 
-# Create the numbering lookup table
-fire_numbers <- tibble(
-  Incid_Name = c("EIGHT FOUR TWO", "TRAIL SPRINGS", "IRON", "CALWOOD",
-                 "EAST FORK", "BEAVER", "LITTLE MESA", "DOE CANYON",
-                 "PLATEAU", "CAMERON PEAK", "LAKE CHRISTINE",
-                 "WESTON PASS", "DUCKETT", "JUNKINS", "LITTLE SAND"),
-  fire_num = 1:15
+```{r}
+# Tell R to find Times New Roman
+font_add(
+  family = "Times New Roman", 
+  regular = systemfonts::match_fonts("Times New Roman")$path
 )
 
-# Join numbers to fires_sub
-fires_sub <- fires_sub %>%
-  left_join(fire_numbers, by = "Incid_Name")
+# Activate showtext
+showtext_auto()
+```
 
-fires_sub <- fires_sub %>%
-  mutate(nudge_y_val = ifelse(fire_num == 5, 6500, 0))  
+Create fires table and sf object ordered by proportion treated
 
+```{r}
+fires_sub <- st_read("data/processed/fuels_analysis.gpkg", layer = "fires")
+my_fires <- read.csv("data/processed/my_fires.csv")
+
+# Note the fires used in regression (fewer than random forest)
+transects <- st_read("data/processed/fuels_analysis.gpkg", layer = "transectsDS") 
+
+fires_table <- my_fires %>%
+  filter(Incid_Name %in% fires_sub$Incid_Name) %>%
+  select(Incid_Name, Fire_Year, Fire_Area_ha, Proportion_Treated) %>%
+  arrange(desc(Proportion_Treated)) %>%
+  mutate(fire_num = row_number(),
+         `Fire Name` = ifelse(!Incid_Name %in% transects$Incid_Name,
+                              paste0(Incid_Name, "*"),
+                              Incid_Name),
+         `Fire Name` = str_to_title(`Fire Name`)) %>%
+  as_tibble()
+
+# Join the number onto the sf object using the original name
+fires_sub <- fires_sub %>%
+  left_join(select(fires_table, Incid_Name, fire_num), by = "Incid_Name")
+
+# Presentation version for the figure
+fires_table <- fires_table %>%
+  select(`#` = fire_num,
+         `Fire Name`,
+         Year = Fire_Year,
+         `Area (ha)` = Fire_Area_ha,
+         `Prop. Treated` = Proportion_Treated)
+```
+
+
+# Make a map of fires across Colorado
+
+```{r}
 ## Cities
 cities <- st_read("D:/Spatial_Data/Cities/Colorado_City_Point_Locations.shp") %>%
   st_transform(crs = crs(fires_sub)) %>%
@@ -50,25 +86,18 @@ roads <- st_read("D:/Spatial_Data/Highways/Highways%3A_Functional_Class.shp") %>
   st_transform(crs=crs(fires_sub)) %>%
   filter(FUNCCLASS == "1  Interstate")
 
-elev <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/LF2020_Elev_CONUS.tif")
+elev <- rast("data/processed/Topo/Elevation.tif")
 
 # Reproject state to match the raster's CRS first, then crop
 state_elev_crs <- st_transform(state, crs(elev))
 
 elev <- elev %>%
-  crop(vect(state_elev_crs)) %>%        # crop in native CRS first (faster)
-  mask(vect(state_elev_crs)) %>%        # mask in native CRS
   aggregate(fact = 3, fun = "mean") %>% # reduce resolution before reprojecting
   project(crs(fires_sub))              # reproject last
 
 # Convert to data frame
 elev_df <- as.data.frame(elev, xy = TRUE) %>%
   rename(elevation = 3)# Elevation raster
-elev <- rast("D:/Spatial_Data/LANDFIRE/LF2020_Elev_CONUS/Tif/Lf2020_Elev_CONUS.tif") %>%
-  project(crs(fires_sub)) %>%
-  aggregate(elev, fact = 3, fun = "mean") %>%
-  crop(vect(state)) %>%
-  mask(vect(state))
 
 # Make a map!
 map <- ggplot() +
@@ -84,17 +113,15 @@ map <- ggplot() +
   geom_sf(
     data = fires_sub,
     fill = "red",
-    color = NA,
-    alpha = 0.7
+    color = NA
   ) +
   
    # Fire numbers
   geom_shadowtext(
     data = fires_sub,
     aes(label = fire_num, geometry = geom),
-    nudge_y = fires_sub$nudge_y_val,
     stat = "sf_coordinates",
-    size = 5,
+    size = 10,
     fontface = "bold",
     color = "black",
     bg.color = "white"
@@ -130,55 +157,18 @@ map <- ggplot() +
 
 map
 ggsave(
-  filename = "documents/ProposalMap.png",
-  plot = map,          # your ggplot object
+  filename = "documents/figures/Map.png",
+  plot = map,        
   width = 6,
   height = 5,
   units = "in",
-  dpi = 300               # 300 for print, 600 for very high quality
+  dpi = 300               
 )
 ```
 
-#Try adding table
+# Add table
 
 ```{r}
-library(gridExtra)
-library(patchwork)
-
-fire_table <- tibble(
-  `#` = 1:15,
-  `Fire Name` = c("Eight Four Two", "Trail Springs", "Iron", "Calwood", "East Fork",
-                  "Beaver", "Little Mesa", "Doe Canyon", "Plateau", "Cameron Peak",
-                  "Lake Christine", "Weston Pass", "Duckett", "Junkins", "Little Sand"),
-  `Year` = c(2017, 2023, 2023, 2020, 2020, 2010, 2023, 2019, 2018, 2020, 2018, 2018, 2011, 2016, 2012),
-  `Area (ha)` = c(2410, 561, 3150, 3981, 706, 1010, 1638, 2991, 7991, 84541, 5061, 5329, 1904, 7698, 10619),
-  `Prop. Treated` = c(0.84, 0.42, 0.27, 0.26, 0.23, 0.23, 0.20, 0.18, 0.16, 0.14, 0.14, 0.13, 0.11, 0.10, 0.10)
-)
-
-# Split into two halves
-table_left <- fire_table[1:8, ]
-table_right <- fire_table[9:15, ]
-
-# # Convert each to grob
-# grob_left <- tableGrob(table_left, rows = NULL, theme = ttheme_minimal(base_size = 8))
-# grob_right <- tableGrob(table_right, rows = NULL, theme = ttheme_minimal(base_size = 8))
-
-# # Place side by side
-# table_combined <- arrangeGrob(grob_left, grob_right, ncol = 2, widths = c(1, 1))
-
-# Pad right table with a blank row to match left
-table_right_padded <- bind_rows(
-  table_right,
-  tibble(`#` = NA_integer_, `Fire Name` = " ", `Year` = NA_integer_, `Area (ha)` = NA_integer_, `Prop. Treated` = NA_real_)
-) %>%
-  mutate(across(where(is.numeric), ~ as.character(.))) %>%
-  mutate(across(everything(), ~ ifelse(is.na(.), "", .)))
-
-# Also convert left to character for consistency
-table_left_chr <- table_left %>%
-  mutate(across(everything(), as.character))
-
-
 my_theme <- ttheme_minimal(
   base_size = 12,
   base_family = "Times New Roman",
@@ -187,14 +177,17 @@ my_theme <- ttheme_minimal(
 )
 
 
-grob_left <- tableGrob(table_left_chr, rows = NULL, theme = my_theme)
-grob_right <- tableGrob(table_right_padded, rows = NULL, theme = my_theme)
+table_left  <- fires_table[1:5, ]  %>% mutate(across(everything(), as.character))
+table_right <- fires_table[6:10, ] %>% mutate(across(everything(), as.character))
 
-table_left_chr <- table_left_chr %>%
-  mutate(` ` = "")  # blank spacer column
+table_left <- table_left %>% mutate(` ` = "")  # spacer column
 
-grob_left <- tableGrob(table_left_chr, rows = NULL, theme = my_theme)
+grob_left  <- tableGrob(table_left,  rows = NULL, theme = my_theme)
+grob_right <- tableGrob(table_right, rows = NULL, theme = my_theme)
 table_combined <- cbind(grob_left, grob_right)
+
+grid::grid.newpage()
+grid::grid.draw(table_combined)
 
 
 # Combine map and table
@@ -204,7 +197,7 @@ combined <- map / wrap_elements(full = table_combined, clip = FALSE) +
         panel.spacing = unit(0, "pt"))
 
 ggsave(
-  filename = "documents/ProposalMap1.png",
+  filename = "documents/figures/Map1.png",
   plot = combined,
   width = 8.5,
   height = 9.5,  # taller to accommodate table
@@ -212,3 +205,103 @@ ggsave(
   dpi = 300
 )
 ```
+
+# Sized for Poster
+
+```{r}
+# ---- Poster sizing (edit these) ----
+poster_w   <- 11.5       # inches
+txt_base   <- 54      # legend / caption text (pt)
+txt_table  <- 54       # table text (pt)
+fire_label <- 25       # geom_shadowtext size is in mm (14 mm ≈ 40 pt)
+font       <- "Times New Roman"
+
+# ---- Map ----
+map <- ggplot() +
+  geom_raster(data = elev_df, aes(x = x, y = y, fill = elevation)) +
+  scale_fill_hypso_c(palette = "dem_screen", name = "Elevation (m)") +
+  geom_sf(data = fires_sub, fill = "red", color = NA) +
+  geom_shadowtext(
+    data = fires_sub,
+    aes(label = fire_num, geometry = geom),
+    stat = "sf_coordinates",
+    size = fire_label,
+    fontface = "bold",
+    color = "black",
+    bg.color = "white",
+    bg.r = 0.15
+  ) +
+  geom_sf(data = roads, fill = NA, color = "grey", linewidth = 1) +
+  geom_sf(data = state, fill = NA, color = "black", linewidth = 1) +
+  coord_sf(expand = FALSE) +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    plot.caption = element_text(family = font, size = txt_base),
+    legend.title = element_text(family = font, size = txt_base),
+    legend.text = element_text(family = font, size = txt_base),
+    legend.key.height = unit(1.2, "cm"),
+    legend.key.width = unit(0.8, "cm"),
+    legend.position = "inside",
+    legend.position.inside = c(0.8, 0.6),
+    legend.justification = c(0, 0),
+    legend.background = element_rect(fill = "white", color = NA)
+  )
+
+# ---- Table ----
+my_theme <- ttheme_minimal(
+  base_size = txt_table,
+  base_family = font,
+  core = list(
+    fg_params = list(fontfamily = font, fontsize = txt_table, hjust = 0.5, x = 0.5),
+    padding = unit(c(4, 1), "mm")
+  ),
+  colhead = list(
+    fg_params = list(fontfamily = font, fontsize = txt_table, fontface = "bold", hjust = 0.5, x = 0.5),
+    padding = unit(c(4, 1), "mm")
+  )
+)
+
+table_left  <- fires_table[1:5, ]  %>% mutate(across(everything(), as.character))
+table_right <- fires_table[6:10, ] %>% mutate(across(everything(), as.character))
+table_left  <- table_left %>% mutate(` ` = "")
+
+grob_left  <- tableGrob(table_left,  rows = NULL, theme = my_theme)
+grob_right <- tableGrob(table_right, rows = NULL, theme = my_theme)
+grob_left$widths[ncol(grob_left)] <- unit(1.5, "cm")   # spacer column width
+table_combined <- cbind(grob_left, grob_right)
+
+# Check that it actually fits in 12"
+# Measure on the saving device (ragg) so font metrics match
+ragg::agg_png(tempfile(), width = fig_w, height = 5, units = "in", res = 300)
+table_w <- grid::convertWidth(sum(table_combined$widths), "in", valueOnly = TRUE)
+table_h <- grid::convertHeight(sum(table_combined$heights), "in", valueOnly = TRUE)
+invisible(dev.off())
+c(width = table_w, height = table_h)
+
+# ---- Layout ----
+side_pad <- 0.1    # inches of white space on each side (this is the "a bit wider")
+fig_w    <- poster_w + 2 * side_pad
+
+# Exact height of the map panel at poster_w wide
+b     <- ggplot_build(map)
+asp   <- b$layout$coord$aspect(b$layout$panel_params[[1]])   # height / width
+map_h <- poster_w * asp
+
+# ---- Save map alone ----
+map_final <- map + theme(plot.margin = margin(0, side_pad, 0, side_pad, "in"))
+ggsave("documents/figures/PosterMap.png", map_final,
+       width = fig_w, height = map_h, units = "in", dpi = 300)
+
+# ---- Combine ----
+combined <- map / plot_spacer() / wrap_elements(full = table_combined, clip = FALSE) +
+  plot_layout(heights = unit(c(map_h, gap, table_h), "in")) &
+  theme(plot.margin = margin(0, side_pad, 0, side_pad, "in"),
+        panel.spacing = unit(0, "pt"))
+
+ggsave("documents/figures/PosterMap1.png", combined,
+       width = fig_w, height = map_h + table_h, units = "in", dpi = 300, device = ragg::agg_png)
+```
+

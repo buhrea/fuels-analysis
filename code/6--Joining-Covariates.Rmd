@@ -548,7 +548,6 @@ allplots <- st_transform(allplots_with_tcc, target_crs) %>%
   select(-TCC_Year)
 ```
 
-
 # Response Variable
 
 We found RdNBR following Parks GEE methods. RdNBR is used as a continuous value for transect points and a mean for plots. Categorical severity (L/M/H) is based on Parks et al. 2018 (https://doi.org/10.3390/rs10060879) for RdNBR without offset: "Threshold values for each fire severity metric corresponding to low (CBI = 0–1.24), moderate (CBI = 1.25–2.25), and high severity (CBI = 2.25–3)."

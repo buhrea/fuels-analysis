@@ -41,13 +41,15 @@ library(brms)
 library(here)
 library(performance)
 library(sjPlot) #Table of model outputs
+library(emmeans) #Visualizing predicted difference
 
-transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS") 
+transects <- st_read(here("data/processed/fuels_analysis.gpkg"), layer = "transectsDS")
 
 #Create factors for random effects and categorical variables
 transects$Event_ID <- factor(transects$Event_ID)
 transects$Incid_Name <- factor(transects$Incid_Name)
 transects$TransectID <- factor(transects$Transect_ID)
+transects$Point_Num <- factor(transects$Point_Num)
 transects$Type <- factor(transects$Type, levels = c("control", "entering", "exiting"))
 
 transects$Trt_Type[is.na(transects$Trt_Type)] <- "Untreated"
@@ -58,26 +60,20 @@ transects <- st_drop_geometry(transects)
 set.seed(42)
 ```
 
-# Jones Dataset
-
-```{r, results = 'asis'}
-#Filter for only Broadcast Burning or Wildfire
-jones_df <- transects %>%
-  filter(!Trt_Type %in% c("Rearrangement")) 
-```
+# Transect Counts and Distributions
 
 ## Transects by Type in each Fire and Starting Severity
 
 ```{r, results = 'asis'}
 # Build abbreviation lookup once, outside the pipe
-fire_abbrevs <- jones_df %>% 
+fire_abbrevs <- transects %>% 
   st_drop_geometry() %>% 
   distinct(Incid_Name) %>% 
   arrange(Incid_Name) %>% 
   mutate(abbrev = abbreviate(Incid_Name, minlength = 3)) %>% 
   tibble::deframe()  
 
-jones_df %>% 
+transects %>% 
   st_drop_geometry() %>% 
   count(Starting_Sev, Incid_Name, Type) %>% 
   dplyr::mutate(
@@ -115,7 +111,7 @@ cat("\n\n**Key:**", paste(names(fire_abbrevs), fire_abbrevs, sep = " = ", collap
 
 ```{r}
 # Filter by Trt_Type to only include broadcast or wildfire
-enter_df <- jones_df %>%
+enter_df <- transects %>%
   filter(Type != "exiting")
 
 enter_df$Trt_Type <- factor(enter_df$Trt_Type, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
@@ -148,7 +144,7 @@ par(mfrow = c(1, 1))
 
 ```{r}
 # Filter by Trt_Type to only include broadcast or wildfire
-exit_df <- jones_df %>%
+exit_df <- transects %>%
   filter(Type != "entering")
 
 exit_df$Trt_Type <- factor(exit_df$Trt_Type, levels = c("Untreated", "Broadcast Burn", "Wildfire"))
@@ -289,6 +285,52 @@ ggplot(pred_all, aes(x = x, y = predicted, group = group, shape = group)) +
     strip.text = element_text(face = "bold"),
     panel.grid.minor = element_blank()
   )
+```
+
+##Try a model with Point_Num
+
+```{r}
+# Point number as a factor (one level per point, no linearity assumed)
+fit_pt <- function(df) {
+  df <- df %>% mutate(Point_F = factor(Point_Num))
+  lmer(RdNBR ~ Type * Point_F + (1 | Incid_Name/Transect_ID),
+       data = df, REML = TRUE)
+}
+
+enter_pt_low  <- fit_pt(enter_df_low)
+enter_pt_mod  <- fit_pt(enter_df_mod)
+enter_pt_high <- fit_pt(enter_df_high)
+
+get_pred <- function(fit, sev) {
+  ggpredict(fit, terms = c("Point_F", "Type")) %>%
+    as_tibble() %>%
+    mutate(severity = sev,
+           Point_Num = as.numeric(as.character(x)))
+}
+
+pred_pts <- bind_rows(
+  get_pred(enter_pt_low,  "Low"),
+  get_pred(enter_pt_mod,  "Moderate"),
+  get_pred(enter_pt_high, "High")
+) %>%
+  filter(!is.na(predicted)) %>%
+  mutate(severity = factor(severity, levels = c("High", "Moderate", "Low")))
+
+ggplot(pred_pts, aes(x = Point_Num, y = predicted,
+                     color = group, fill = group, shape = group)) +
+  annotate("rect", xmin = 5.5, xmax = 10.5, ymin = -Inf, ymax = Inf,
+           alpha = 0.08) +
+  geom_ribbon(aes(ymin = conf.low, ymax = conf.high),
+              alpha = 0.15, color = NA) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 3) +
+  scale_x_continuous(breaks = 1:10) +
+  facet_wrap(~severity, nrow = 1) +
+  labs(x = "Point number along transect", y = "Predicted RdNBR",
+       color = "Type", fill = "Type", shape = "Type") +
+  theme_bw(base_size = 13) +
+  theme(strip.text = element_text(face = "bold"),
+        panel.grid.minor = element_blank())
 ```
 
 ## For GSS Abstract, percent drop in severity when high severity fire enters a Treated area
