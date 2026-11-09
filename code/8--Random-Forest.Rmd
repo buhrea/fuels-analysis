@@ -1401,7 +1401,7 @@ ggsave(
   filename = "documents/figures/Interaction.png",
   plot     = fig3,
   width    = 10,
-  height   = 4,
+  height   = 3,
   units    = "in",
   dpi      = 300
 )
